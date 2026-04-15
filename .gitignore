@@ -1,0 +1,48 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.pytest_cache/
+.mypy_cache/
+.ipynb_checkpoints/
+.venv/
+venv/
+
+# Editors and OS files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Logs
+*.log
+
+# Local environments and secrets
+.env
+.env.*
+
+# Analysis outputs
+outputs/
+plots/
+histograms/
+results/
+tmp/
+cache/
+
+# ROOT and analysis artifacts
+*.root
+*.h5
+*.pkl
+*.pickle
+*.npy
+*.npz
+*.pdf
+*.png
+
+# Batch and grid outputs
+log/
+logs/
+slurm-*.out
+slurm-*.err
+*.stdout
+*.stderr
