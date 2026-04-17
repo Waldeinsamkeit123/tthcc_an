@@ -1,0 +1,33 @@
+{
+  "normalization": {
+    "gen_sumw_file": "/path/to/gen_sumws.json",
+    "xsec_file": "/path/to/crosssections_run3.json",
+    "lumi_fb": 109.08
+  },
+  "samples": [
+    {
+      "name": "ttHcc",
+      "process": "ttHcc",
+      "label": "ttH(H->cc)",
+      "files": [
+        "/path/to/ttHcc/*.root"
+      ]
+    },
+    {
+      "name": "ttHbb",
+      "process": "ttHbb",
+      "label": "ttH(H->bb)",
+      "files": [
+        "/path/to/ttHbb/*.root"
+      ]
+    },
+    {
+      "name": "ttbar",
+      "process": "ttbar",
+      "label": "ttbar",
+      "files": [
+        "/path/to/ttbar/*.root"
+      ]
+    }
+  ]
+}

@@ -42,7 +42,11 @@ cache/
 # Batch and grid outputs
 log/
 logs/
+condor/
 slurm-*.out
 slurm-*.err
 *.stdout
 *.stderr
+
+# Agents and temporary files
+AGENTS.md
