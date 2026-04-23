@@ -45,6 +45,7 @@ Main features:
 - computes weighted working points at chosen signal efficiencies
 - writes tables, text summaries, JSON summaries, ROC curves, and score plots
 - stores a reusable `plot_input.npz` cache for later plot-only redraws
+- uses histogram chunk payloads by default for low-memory HTCondor merges
 - uses `mplhep` with CMS style for figures
 
 Currently supported scores:
@@ -112,11 +113,13 @@ For `target = hbb`:
 Available configs in this repository:
 
 - [config/samples.example.json](/eos/user/h/hanw/ttHcc/tthcc_an/config/samples.example.json)
-- [config/samples_2024_0L_boost_allds_event.json](/eos/user/h/hanw/ttHcc/tthcc_an/config/samples_2024_0L_boost_allds_event.json)
+- [config/samples_2024_add_nonttbarmatch_allmc.json](/eos/user/h/hanw/ttHcc/tthcc_an/config/samples_2024_add_nonttbarmatch_allmc.json)
 
 The 2024 config already contains:
 
 - the sample list
+- all MC datasets listed in the corresponding `gen_sumw` JSON
+- process-group labels for `ttbar`, `tt+bb`, `ttV`, `tt+ll`, `single top`, `W+jets`, `Z+jets`, `QCD`, and `ttH*`
 - the 2024 luminosity
 - the `gen_sumw` JSON path
 - the cross section JSON path
@@ -130,7 +133,7 @@ LCG108
 cd /eos/user/h/hanw/ttHcc/tthcc_an
 
 python scripts/run_boosted_higgs_tagger_study.py \
-  --config config/samples_2024_0L_boost_allds_event.json \
+  --config config/samples_2024_add_nonttbarmatch_allmc.json \
   --outdir outputs/boosted_higgs_tagger_study_2024
 ```
 
@@ -141,7 +144,7 @@ LCG108
 cd /eos/user/h/hanw/ttHcc/tthcc_an
 
 python scripts/run_boosted_higgs_tagger_study.py \
-  --config config/samples_2024_0L_boost_allds_event.json \
+  --config config/samples_2024_add_nonttbarmatch_allmc.json \
   --targets hcc \
   --scores gpart_h2cc pnet_hcc \
   --sig-effs 0.3 0.5 0.7 \
@@ -152,7 +155,7 @@ python scripts/run_boosted_higgs_tagger_study.py \
 
 ```bash
 python scripts/run_boosted_higgs_tagger_study.py \
-  --config config/samples_2024_0L_boost_allds_event.json \
+  --config config/samples_2024_add_nonttbarmatch_allmc.json \
   --candidate-strategy mass_window_leading_pt \
   --msd-window-low 100 \
   --msd-window-high 150 \
@@ -168,6 +171,12 @@ For a standard run, the output directory contains:
 - `plots/*.png`
 - `study_summary.json`
 - `plot_input.npz`
+
+In addition to the truth-category plots, the script now also writes process-group plots such as:
+
+- `plots/*__background_process_score.png`
+- `plots/*__background_process_wp.png`
+- `plots/*__significance_scan.png`
 
 The text summaries include:
 
@@ -197,11 +206,8 @@ After a full run, the script stores:
 
 This is a slim cache containing:
 
-- `truth_code`
-- `weight`
-- `weight_signed`
-- requested score arrays
-- sample metadata
+- direct-run mode: jet-level arrays such as `truth_code`, `process_code`, `weight`, and requested scores
+- chunked HTCondor mode: compact score histograms, truth/process yields, and sample metadata
 
 You can redraw plots later without rereading ROOT files or recomputing the main
 study outputs.
@@ -213,7 +219,7 @@ LCG108
 cd /eos/user/h/hanw/ttHcc/tthcc_an
 
 python scripts/run_boosted_higgs_tagger_study.py \
-  --config config/samples_2024_0L_boost_allds_event.json \
+  --config config/samples_2024_add_nonttbarmatch_allmc.json \
   --plot-input outputs/boosted_higgs_tagger_study_2024/plot_input.npz \
   --plot-only \
   --outdir outputs/boosted_higgs_tagger_study_2024
@@ -226,7 +232,7 @@ LCG108
 cd /eos/user/h/hanw/ttHcc/tthcc_an
 
 python scripts/run_boosted_higgs_tagger_study.py \
-  --config config/samples_2024_0L_boost_allds_event.json \
+  --config config/samples_2024_add_nonttbarmatch_allmc.json \
   --plot-input outputs/boosted_higgs_tagger_study_2024/plot_input.npz \
   --plot-only \
   --outdir outputs/boosted_higgs_tagger_study_2024 \
@@ -249,7 +255,7 @@ LCG108
 cd /eos/user/h/hanw/ttHcc/tthcc_an
 
 python scripts/run_boosted_higgs_tagger_study.py \
-  --config config/samples_2024_0L_boost_allds_event.json \
+  --config config/samples_2024_add_nonttbarmatch_allmc.json \
   --merge-chunks 'condor/<tag>/chunk_outputs/chunk_*.npz' \
   --outdir outputs/boosted_higgs_tagger_study_2024 \
   --skip-plots
@@ -270,7 +276,7 @@ LCG108
 cd /eos/user/h/hanw/ttHcc/tthcc_an
 
 python scripts/run_boosted_higgs_tagger_study.py \
-  --config config/samples_2024_0L_boost_allds_event.json \
+  --config config/samples_2024_add_nonttbarmatch_allmc.json \
   --merge-chunks 'condor/<tag>/chunk_outputs/chunk_*.npz' \
   --plot-only \
   --outdir outputs/boosted_higgs_tagger_study_2024_replot
@@ -282,22 +288,25 @@ This is useful if an older output directory does not yet have `plot_input.npz`.
 
 For large studies on lxplus, the recommended mode is the chunked HTCondor DAG:
 
-- chunk jobs read subsets of ROOT files and export slim `.npz` payloads
+- chunk jobs read subsets of ROOT files and export compact histogram `.npz` payloads by default
 - one merge job runs afterwards and writes the final outputs
 
 Recommended submission:
 
 ```bash
 python scripts/submit_boosted_higgs_tagger_condor.py \
-  --config config/samples_2024_0L_boost_allds_event.json \
+  --config config/samples_2024_add_nonttbarmatch_allmc.json \
   --outdir outputs/boosted_higgs_tagger_study_2024 \
-  --files-per-chunk 20 \
+  --files-per-chunk 60 \
   --request-memory "8 GB" \
-  --merge-request-memory "24 GB" \
+  --merge-request-memory "16 GB" \
   --job-flavour workday \
   --merge-job-flavour tomorrow \
   --submit
 ```
+
+For the current all-MC configuration, `--files-per-chunk 60` is a good starting
+point if you want fewer Condor jobs than the more conservative smaller-chunk setup.
 
 The workflow directory under `condor/<tag>/` contains:
 
@@ -317,9 +326,9 @@ You can also forward extra study arguments after `--`, for example:
 
 ```bash
 python scripts/submit_boosted_higgs_tagger_condor.py \
-  --config config/samples_2024_0L_boost_allds_event.json \
+  --config config/samples_2024_add_nonttbarmatch_allmc.json \
   --outdir outputs/boosted_higgs_tagger_study_2024 \
-  --files-per-chunk 20 \
+  --files-per-chunk 60 \
   --request-memory "8 GB" \
   --merge-request-memory "24 GB" \
   -- --scores gpart_h2cc gpart_h2bb
@@ -334,8 +343,9 @@ For debugging, manual chunk export and merge are also supported.
 ```bash
 LCG108
 python scripts/run_boosted_higgs_tagger_study.py \
-  --config config/samples_2024_0L_boost_allds_event.json \
+  --config config/samples_2024_add_nonttbarmatch_allmc.json \
   --scores gpart_h2cc gpart_h2bb \
+  --chunk-payload-mode histogram \
   --export-chunk outputs/debug/chunk_0000.npz \
   --outdir outputs/debug/final
 ```
@@ -345,7 +355,7 @@ python scripts/run_boosted_higgs_tagger_study.py \
 ```bash
 LCG108
 python scripts/run_boosted_higgs_tagger_study.py \
-  --config config/samples_2024_0L_boost_allds_event.json \
+  --config config/samples_2024_add_nonttbarmatch_allmc.json \
   --scores gpart_h2cc gpart_h2bb \
   --merge-chunks 'outputs/debug/*.npz' \
   --outdir outputs/debug/final

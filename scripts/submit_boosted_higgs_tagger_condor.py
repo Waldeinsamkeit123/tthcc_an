@@ -14,6 +14,7 @@ from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_LCG_SETUP = "/cvmfs/sft.cern.ch/lcg/views/LCG_108/x86_64-el9-gcc15-opt/setup.sh"
+DEFAULT_MERGE_REQUEST_MEMORY = "16 GB"
 
 
 def parse_args() -> argparse.Namespace:
@@ -84,8 +85,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--merge-request-memory",
-        default=None,
-        help="Optional override for merge-job memory in chunked mode.",
+        default=DEFAULT_MERGE_REQUEST_MEMORY,
+        help="Memory request for the merge job in chunked mode.",
     )
     parser.add_argument(
         "--merge-request-cpus",
@@ -574,7 +575,7 @@ def prepare_chunked_workflow(
         wrapper_path=merge_wrapper_path,
         log_dir=merge_log_dir,
         request_cpus=args.merge_request_cpus or args.request_cpus,
-        request_memory=args.merge_request_memory or args.request_memory,
+        request_memory=args.merge_request_memory,
         request_disk=args.merge_request_disk or args.request_disk,
         job_flavour=args.merge_job_flavour or args.job_flavour,
     )
@@ -604,7 +605,7 @@ def prepare_chunked_workflow(
         "chunk_request_disk": args.request_disk,
         "chunk_job_flavour": args.job_flavour,
         "merge_request_cpus": args.merge_request_cpus or args.request_cpus,
-        "merge_request_memory": args.merge_request_memory or args.request_memory,
+        "merge_request_memory": args.merge_request_memory,
         "merge_request_disk": args.merge_request_disk or args.request_disk,
         "merge_job_flavour": args.merge_job_flavour or args.job_flavour,
         "created_at": datetime.now().isoformat(timespec="seconds"),
