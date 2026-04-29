@@ -8,7 +8,12 @@ from typing import Any
 
 import numpy as np
 
-from tthcc_an.definitions import SCORE_LABELS, TARGET_DEFINITIONS, TRUTH_LABEL_ORDER
+from tthcc_an.definitions import (
+    GLOBALPART3_CONTOUR_PLOT,
+    SCORE_LABELS,
+    TARGET_DEFINITIONS,
+    TRUTH_LABEL_ORDER,
+)
 
 
 def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
@@ -88,4 +93,44 @@ def format_summary_text(
             f"{s_over_b_str:>10}  {s_over_sqrt_s_plus_b_str:>12}  "
             f"{s_over_sqrt_b_str:>10}  {purity_str:>8}"
         )
+    return "\n".join(lines) + "\n"
+
+
+def format_contour_region_efficiency_text(region_efficiencies: dict[str, dict[str, float]]) -> str:
+    x_score = str(GLOBALPART3_CONTOUR_PLOT["x_score"])
+    y_score = str(GLOBALPART3_CONTOUR_PLOT["y_score"])
+    region_rows = [
+        ("qcd_others", "QCD&Others region"),
+        ("hcc", "Hcc region"),
+        ("hbb", "Hbb region"),
+    ]
+    category_columns = [
+        ("hbb_pure", "hbb_pure"),
+        ("hcc_pure", "hcc_pure"),
+        ("others", "Others"),
+    ]
+
+    def _format_percent(value: float) -> str:
+        if not np.isfinite(value):
+            return "n/a"
+        return f"{value * 100.0:.1f}%"
+
+    lines: list[str] = []
+    lines.append("=== GlobalParT3 Contour Region Efficiencies ===")
+    lines.append(f"x-axis: {SCORE_LABELS[x_score]}")
+    lines.append(f"y-axis: {SCORE_LABELS[y_score]}")
+    lines.append("Weighting: analysis_weight = sample_norm * abs(event_weight_raw)")
+    lines.append("Normalization: weighted efficiency = weighted yield in region / total weighted yield of that category")
+    lines.append("")
+    lines.append("Region definitions:")
+    lines.append("  - Hcc region: (x > 0.45) and (0.0 < y <= 0.7)")
+    lines.append("  - Hbb region: (x > 0.75) and (0.7 < y <= 1.0)")
+    lines.append("  - QCD&Others region: not(Hcc region or Hbb region)")
+    lines.append("")
+    lines.append(f"{'Region':<20}  {'hbb_pure':>12}  {'hcc_pure':>12}  {'Others':>12}")
+    lines.append("-" * 62)
+    for region_key, region_title in region_rows:
+        row = region_efficiencies.get(region_key, {})
+        values = [_format_percent(float(row.get(category_key, float('nan')))) for category_key, _ in category_columns]
+        lines.append(f"{region_title:<20}  {values[0]:>12}  {values[1]:>12}  {values[2]:>12}")
     return "\n".join(lines) + "\n"

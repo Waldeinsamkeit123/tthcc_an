@@ -43,6 +43,8 @@ from tthcc_an.metrics import (
 
 DISPLAY_SCORE_BINS = 50
 DISPLAY_PROCESS_SCORE_BINS = 50
+CONTOUR_REGION_LINE_COLOR = "#2f2f2f"
+CONTOUR_REGION_LINEWIDTH = 1.1
 
 
 @dataclass
@@ -229,6 +231,11 @@ def _globalpart3_contour_handles(categories: list[dict[str, Any]]) -> list[Line2
         "hcc_pure": 1,
         "others": 2,
     }
+    legend_label_map = {
+        "hbb_pure": "hbb_pure jets & efficiencies (%)",
+        "hcc_pure": "hcc_pure jets & efficiencies (%)",
+        "others": "Others jets & efficiencies (%)",
+    }
     return [
         Line2D(
             [0],
@@ -236,16 +243,158 @@ def _globalpart3_contour_handles(categories: list[dict[str, Any]]) -> list[Line2
             color=category["color"],
             linewidth=1.7,
             alpha=0.95,
-            label=category["legend_label"],
+            label=legend_label_map.get(str(category["key"]), str(category.get("legend_label", category["key"]))),
         )
         for category in sorted(categories, key=lambda item: legend_order.get(str(item["key"]), 99))
     ]
+
+
+def _globalpart3_region_masks(x_values: np.ndarray, y_values: np.ndarray) -> dict[str, np.ndarray]:
+    hcc_region = (x_values > 0.45) & (y_values > 0.0) & (y_values <= 0.7)
+    hbb_region = (x_values > 0.75) & (y_values > 0.7) & (y_values <= 1.0)
+    qcd_region = ~(hcc_region | hbb_region)
+    return {
+        "qcd_others": qcd_region,
+        "hcc": hcc_region,
+        "hbb": hbb_region,
+    }
+
+
+def _compute_contour_region_efficiencies_from_raw(
+    x_scores: np.ndarray,
+    y_scores: np.ndarray,
+    truth_codes: np.ndarray,
+    weights: np.ndarray,
+) -> dict[str, dict[str, float]]:
+    positive_weights = np.isfinite(weights) & (weights > 0)
+    use_weights = bool(np.any(positive_weights))
+    effective_weights = np.asarray(weights, dtype=np.float64) if use_weights else np.ones_like(x_scores, dtype=np.float64)
+    valid = np.isfinite(x_scores) & np.isfinite(y_scores) & np.isfinite(effective_weights)
+    if use_weights:
+        valid &= effective_weights > 0
+    if not np.any(valid):
+        return {}
+
+    x_valid = np.clip(np.asarray(x_scores[valid], dtype=np.float64), GLOBALPART3_CONTOUR_CLIP_EPS, 1.0 - GLOBALPART3_CONTOUR_CLIP_EPS)
+    y_valid = np.clip(np.asarray(y_scores[valid], dtype=np.float64), GLOBALPART3_CONTOUR_CLIP_EPS, 1.0 - GLOBALPART3_CONTOUR_CLIP_EPS)
+    truth_valid = np.asarray(truth_codes[valid], dtype=np.int32)
+    weights_valid = np.asarray(effective_weights[valid], dtype=np.float64)
+    region_masks = _globalpart3_region_masks(x_valid, y_valid)
+
+    category_code_map = {
+        "hbb_pure": TRUTH_LABEL_TO_CODE["hbb_pure"],
+        "hcc_pure": TRUTH_LABEL_TO_CODE["hcc_pure"],
+    }
+    category_masks = {
+        "hbb_pure": truth_valid == category_code_map["hbb_pure"],
+        "hcc_pure": truth_valid == category_code_map["hcc_pure"],
+    }
+    category_masks["others"] = ~(category_masks["hbb_pure"] | category_masks["hcc_pure"])
+
+    region_efficiencies: dict[str, dict[str, float]] = {}
+    for region_key, region_mask in region_masks.items():
+        region_efficiencies[region_key] = {}
+        for category_key, category_mask in category_masks.items():
+            total = float(np.sum(weights_valid[category_mask]))
+            if total <= 0:
+                region_efficiencies[region_key][category_key] = float("nan")
+                continue
+            inside = float(np.sum(weights_valid[category_mask & region_mask]))
+            region_efficiencies[region_key][category_key] = inside / total
+    return region_efficiencies
+
+
+def _compute_contour_region_efficiencies_from_hist(
+    categories: list[dict[str, Any]],
+    weight_category: np.ndarray,
+    x_edges: np.ndarray,
+    y_edges: np.ndarray,
+) -> dict[str, dict[str, float]]:
+    x_centers = 0.5 * (x_edges[:-1] + x_edges[1:])
+    y_centers = 0.5 * (y_edges[:-1] + y_edges[1:])
+    mesh_x, mesh_y = np.meshgrid(x_centers, y_centers, indexing="ij")
+    region_masks = _globalpart3_region_masks(mesh_x, mesh_y)
+
+    category_index_map = {str(category["key"]): index for index, category in enumerate(categories)}
+    region_efficiencies: dict[str, dict[str, float]] = {}
+    for region_key, region_mask in region_masks.items():
+        region_efficiencies[region_key] = {}
+        for category_key in ["hbb_pure", "hcc_pure", "others"]:
+            if category_key not in category_index_map:
+                region_efficiencies[region_key][category_key] = float("nan")
+                continue
+            hist = np.asarray(weight_category[category_index_map[category_key]], dtype=np.float64)
+            total = float(np.sum(hist))
+            if total <= 0:
+                region_efficiencies[region_key][category_key] = float("nan")
+                continue
+            inside = float(np.sum(hist[region_mask]))
+            region_efficiencies[region_key][category_key] = inside / total
+    return region_efficiencies
+
+
+def _draw_globalpart3_region_boundaries(ax: plt.Axes) -> None:
+    ax.plot([0.45, 0.45], [0.0, 0.7], color=CONTOUR_REGION_LINE_COLOR, linewidth=CONTOUR_REGION_LINEWIDTH, zorder=8.0)
+    ax.plot([0.45, 1.0], [0.7, 0.7], color=CONTOUR_REGION_LINE_COLOR, linewidth=CONTOUR_REGION_LINEWIDTH, zorder=8.0)
+    ax.plot([0.75, 0.75], [0.7, 1.0], color=CONTOUR_REGION_LINE_COLOR, linewidth=CONTOUR_REGION_LINEWIDTH, zorder=8.0)
+
+
+def _format_region_efficiency(efficiency: float) -> str:
+    if not np.isfinite(efficiency):
+        return "n/a"
+    return f"{efficiency * 100.0:.1f}%"
+
+
+def _annotate_globalpart3_regions(
+    ax: plt.Axes,
+    region_efficiencies: dict[str, dict[str, float]],
+    plot_style: PlotStyle,
+) -> None:
+    annotation_specs = [
+        ("qcd_others", "QCD&Others region", 0.15, 0.80),
+        ("hcc", "Hcc region", 0.55, 0.65),
+        ("hbb", "Hbb region", 0.78, 0.88),
+    ]
+    category_styles = [
+        ("hbb_pure", "#ff7f0e"),
+        ("hcc_pure", "#d62728"),
+        ("others", "#1f77b4"),
+    ]
+
+    title_fontsize = max(plot_style.tick_size + 0.3, 9.0)
+    value_fontsize = max(plot_style.tick_size - 0.2, 8.5)
+    line_spacing = 0.045
+
+    for region_key, title, x_pos, y_pos in annotation_specs:
+        ax.text(
+            x_pos,
+            y_pos,
+            title,
+            color=CONTOUR_REGION_LINE_COLOR,
+            fontsize=title_fontsize,
+            ha="left",
+            va="top",
+            zorder=9.0,
+        )
+        region_map = region_efficiencies.get(region_key, {})
+        for index, (category_key, color) in enumerate(category_styles, start=1):
+            ax.text(
+                x_pos,
+                y_pos - line_spacing * index,
+                _format_region_efficiency(float(region_map.get(category_key, float("nan")))),
+                color=color,
+                fontsize=value_fontsize,
+                ha="left",
+                va="top",
+                zorder=9.0,
+            )
 
 
 def _plot_globalpart3_contours_from_histograms(
     contour_histograms: list[tuple[dict[str, Any], np.ndarray]],
     x_edges: np.ndarray,
     y_edges: np.ndarray,
+    region_efficiencies: dict[str, dict[str, float]],
     outpath: Path,
     plot_style: PlotStyle,
     *,
@@ -282,8 +431,8 @@ def _plot_globalpart3_contours_from_histograms(
             hist_norm.T,
             levels=contour_levels,
             colors=[category["color"]],
-            linewidths=0.8,
-            alpha=0.55,
+            linewidths=0.7,
+            alpha=0.35,
             zorder=float(zorder) + 0.1,
         )
 
@@ -297,16 +446,18 @@ def _plot_globalpart3_contours_from_histograms(
     ax.set_ylim(0.0, 1.0)
     ax.tick_params(axis="both", labelsize=plot_style.tick_size)
     ax.grid(True, alpha=0.2)
+    _draw_globalpart3_region_boundaries(ax)
     ax.legend(
         handles=_globalpart3_contour_handles(plotted_categories),
         fontsize=plot_style.legend_size,
         loc="upper left",
-        bbox_to_anchor=(0.03, 0.97),
+        bbox_to_anchor=(0.11, 0.975),
         frameon=False,
         borderpad=0.2,
         labelspacing=0.3,
         handlelength=1.8,
     )
+    _annotate_globalpart3_regions(ax, region_efficiencies, plot_style)
     _cms_label(ax, plot_style)
     _save_plot(fig, outpath, plot_style, left=0.14, right=0.97, bottom=0.14, top=0.87, save_pdf=False)
 
@@ -341,11 +492,18 @@ def plot_globalpart3_contours(
             weights=weights_valid[category_mask],
         )
         contour_histograms.append((category, np.asarray(hist2d, dtype=np.float64)))
+    region_efficiencies = _compute_contour_region_efficiencies_from_raw(
+        x_scores=x_scores,
+        y_scores=y_scores,
+        truth_codes=truth_codes,
+        weights=weights,
+    )
 
     _plot_globalpart3_contours_from_histograms(
         contour_histograms,
         x_edges,
         y_edges,
+        region_efficiencies,
         outpath,
         plot_style,
         x_score_name=GLOBALPART3_CONTOUR_PLOT["x_score"],
@@ -365,15 +523,49 @@ def plot_globalpart3_contours_from_hist(
         if index >= weight_category.shape[0]:
             break
         contour_histograms.append((category, np.asarray(weight_category[index], dtype=np.float64)))
+    x_edges = np.asarray(contour_payload["x_edges"], dtype=np.float64)
+    y_edges = np.asarray(contour_payload["y_edges"], dtype=np.float64)
+    region_efficiencies = _compute_contour_region_efficiencies_from_hist(
+        categories=categories,
+        weight_category=weight_category,
+        x_edges=x_edges,
+        y_edges=y_edges,
+    )
 
     _plot_globalpart3_contours_from_histograms(
         contour_histograms,
-        np.asarray(contour_payload["x_edges"], dtype=np.float64),
-        np.asarray(contour_payload["y_edges"], dtype=np.float64),
+        x_edges,
+        y_edges,
+        region_efficiencies,
         outpath,
         plot_style,
         x_score_name=str(contour_payload.get("x_score", GLOBALPART3_CONTOUR_PLOT["x_score"])),
         y_score_name=str(contour_payload.get("y_score", GLOBALPART3_CONTOUR_PLOT["y_score"])),
+    )
+
+
+def compute_globalpart3_region_efficiencies_from_raw(
+    x_scores: np.ndarray,
+    y_scores: np.ndarray,
+    truth_codes: np.ndarray,
+    weights: np.ndarray,
+) -> dict[str, dict[str, float]]:
+    return _compute_contour_region_efficiencies_from_raw(
+        x_scores=x_scores,
+        y_scores=y_scores,
+        truth_codes=truth_codes,
+        weights=weights,
+    )
+
+
+def compute_globalpart3_region_efficiencies_from_hist_payload(
+    contour_payload: dict[str, Any],
+) -> dict[str, dict[str, float]]:
+    return _compute_contour_region_efficiencies_from_hist(
+        categories=list(contour_payload.get("categories", [])),
+        weight_category=np.asarray(contour_payload["weight_category"], dtype=np.float64),
+        x_edges=np.asarray(contour_payload["x_edges"], dtype=np.float64),
+        y_edges=np.asarray(contour_payload["y_edges"], dtype=np.float64),
     )
 
 

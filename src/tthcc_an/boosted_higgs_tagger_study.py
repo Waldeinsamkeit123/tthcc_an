@@ -59,6 +59,8 @@ from tthcc_an.payload_io import (
 )
 from tthcc_an.plotting import (
     build_plot_style,
+    compute_globalpart3_region_efficiencies_from_hist_payload,
+    compute_globalpart3_region_efficiencies_from_raw,
     plot_background_process_score_distribution,
     plot_background_process_score_distribution_from_hist,
     plot_background_process_working_points,
@@ -70,7 +72,7 @@ from tthcc_an.plotting import (
     plot_score_distribution_from_hist,
     plot_significance_scan,
 )
-from tthcc_an.reporting import format_summary_text, write_csv, write_json
+from tthcc_an.reporting import format_contour_region_efficiency_text, format_summary_text, write_csv, write_json
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -907,6 +909,92 @@ def render_histogram_plots(
                 target_payload[score_name]["process_groups"] = [entry["process"] for entry in process_entries]
 
 
+def _globalpart3_region_output_paths(outdirs: dict[str, Path]) -> tuple[Path, Path]:
+    stem = f"{GLOBALPART3_CONTOUR_PLOT['filename_stem']}__region_efficiencies"
+    return outdirs["summaries"] / f"{stem}.txt", outdirs["summaries"] / f"{stem}.json"
+
+
+def _globalpart3_region_metadata(region_efficiencies: dict[str, dict[str, float]]) -> dict[str, Any]:
+    return {
+        "x_score": GLOBALPART3_CONTOUR_PLOT["x_score"],
+        "y_score": GLOBALPART3_CONTOUR_PLOT["y_score"],
+        "weight_definition": "analysis_weight = sample_norm * abs(event_weight_raw)",
+        "normalization": "weighted yield in region / total weighted yield of that category",
+        "region_definitions": {
+            "hcc": {
+                "selection": "(x > 0.45) and (0.0 < y <= 0.7)",
+                "x_min_exclusive": 0.45,
+                "y_min_exclusive": 0.0,
+                "y_max_inclusive": 0.7,
+            },
+            "hbb": {
+                "selection": "(x > 0.75) and (0.7 < y <= 1.0)",
+                "x_min_exclusive": 0.75,
+                "y_min_exclusive": 0.7,
+                "y_max_inclusive": 1.0,
+            },
+            "qcd_others": {
+                "selection": "not(Hcc region or Hbb region)",
+            },
+        },
+        "region_efficiencies": region_efficiencies,
+    }
+
+
+def _write_globalpart3_region_outputs(
+    region_efficiencies: dict[str, dict[str, float]],
+    study_payload: dict[str, Any],
+    outdirs: dict[str, Path],
+) -> None:
+    if not region_efficiencies:
+        return
+    contour_payload = study_payload.setdefault(
+        "globalpart3_contours",
+        {
+            "x_score": GLOBALPART3_CONTOUR_PLOT["x_score"],
+            "y_score": GLOBALPART3_CONTOUR_PLOT["y_score"],
+            "filename_stem": GLOBALPART3_CONTOUR_PLOT["filename_stem"],
+        },
+    )
+    contour_payload["region_efficiencies"] = region_efficiencies
+    region_summary = _globalpart3_region_metadata(region_efficiencies)
+    txt_path, json_path = _globalpart3_region_output_paths(outdirs)
+    txt_path.write_text(format_contour_region_efficiency_text(region_efficiencies), encoding="utf-8")
+    write_json(json_path, region_summary)
+
+
+def maybe_write_globalpart3_region_outputs_from_raw(
+    data: dict[str, np.ndarray],
+    study_payload: dict[str, Any],
+    outdirs: dict[str, Path],
+) -> None:
+    contour_x_score = GLOBALPART3_CONTOUR_PLOT["x_score"]
+    contour_y_score = GLOBALPART3_CONTOUR_PLOT["y_score"]
+    if contour_x_score not in data or contour_y_score not in data:
+        return
+    if "truth_code" not in data or "weight" not in data:
+        return
+    region_efficiencies = compute_globalpart3_region_efficiencies_from_raw(
+        x_scores=np.asarray(data[contour_x_score], dtype=np.float64),
+        y_scores=np.asarray(data[contour_y_score], dtype=np.float64),
+        truth_codes=np.asarray(data["truth_code"], dtype=np.int32),
+        weights=np.asarray(data["weight"], dtype=np.float64),
+    )
+    _write_globalpart3_region_outputs(region_efficiencies, study_payload, outdirs)
+
+
+def maybe_write_globalpart3_region_outputs_from_hist(
+    histogram_payload: dict[str, Any],
+    study_payload: dict[str, Any],
+    outdirs: dict[str, Path],
+) -> None:
+    contour_payload = histogram_payload.get("contour_payloads", {}).get(GLOBALPART3_CONTOUR_PLOT["key"])
+    if contour_payload is None:
+        return
+    region_efficiencies = compute_globalpart3_region_efficiencies_from_hist_payload(contour_payload)
+    _write_globalpart3_region_outputs(region_efficiencies, study_payload, outdirs)
+
+
 def finalize_study(
     data: dict[str, np.ndarray],
     sample_summaries: list[dict[str, Any]],
@@ -924,6 +1012,7 @@ def finalize_study(
         "targets": {},
     }
     export_chunk_payload(outdirs["base"] / "plot_input.npz", data, sample_summaries, weighting_info)
+    maybe_write_globalpart3_region_outputs_from_raw(data, study_payload, outdirs)
 
     for target in effective_args.targets:
         resolved_scores = resolve_scores(effective_args.scores, target, available_scores)
@@ -971,6 +1060,7 @@ def finalize_plots_only(
         "targets": {},
         "mode": "plot_only",
     }
+    maybe_write_globalpart3_region_outputs_from_raw(data, study_payload, outdirs)
     render_plots(data, effective_args, study_payload, outdirs)
     write_json(outdirs["base"] / "plot_only_summary.json", study_payload)
     return study_payload
@@ -993,6 +1083,7 @@ def finalize_histogram_study(
         "targets": {},
     }
     export_histogram_payload(outdirs["base"] / "plot_input.npz", histogram_payload, sample_summaries, weighting_info)
+    maybe_write_globalpart3_region_outputs_from_hist(histogram_payload, study_payload, outdirs)
 
     hist_edges = np.asarray(histogram_payload["hist_edges"], dtype=np.float64)
     for target in effective_args.targets:
@@ -1037,6 +1128,7 @@ def finalize_histogram_plots_only(
         "targets": {},
         "mode": "plot_only",
     }
+    maybe_write_globalpart3_region_outputs_from_hist(histogram_payload, study_payload, outdirs)
     render_histogram_plots(histogram_payload, effective_args, study_payload, outdirs)
     write_json(outdirs["base"] / "plot_only_summary.json", study_payload)
     return study_payload

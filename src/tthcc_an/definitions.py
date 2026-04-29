@@ -225,19 +225,19 @@ GLOBALPART3_CONTOUR_ENCLOSED_FRACTIONS = [
 GLOBALPART3_CONTOUR_CATEGORIES = [
     {
         "key": "hbb_pure",
-        "legend_label": "hbb_pure",
+        "legend_label": "hbb_pure jets & efficiencies (%)",
         "color": "#ff7f0e",
         "truth_codes": [TRUTH_LABEL_TO_CODE["hbb_pure"]],
     },
     {
         "key": "hcc_pure",
-        "legend_label": "hcc_pure",
+        "legend_label": "hcc_pure jets & efficiencies (%)",
         "color": "#d62728",
         "truth_codes": [TRUTH_LABEL_TO_CODE["hcc_pure"]],
     },
     {
         "key": "others",
-        "legend_label": "Others",
+        "legend_label": "Others jets & efficiencies (%)",
         "color": "#1f77b4",
         "truth_codes": [
             code
