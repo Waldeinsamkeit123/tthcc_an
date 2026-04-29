@@ -38,12 +38,14 @@ branches such as:
 
 Main features:
 
-- supports `H->cc` and `H->bb` targets
+- supports `H->cc`, `H->bb`, and combined `H->bb / cc` (`higgs`) targets
 - reads multiple `ttHcc`, `ttHbb`, and `ttbar` samples from JSON config
 - only reads the `FatJet` branches needed for the requested scores
-- supports `all_jets`, `leading_pt`, and `mass_window_leading_pt`
+- supports `all_jets`, `leading_pt`, `mass_window_all_jets`, and `mass_window_leading_pt`
+- studies working points on mass-window-selected jets by default
 - computes weighted working points at chosen signal efficiencies
 - writes tables, text summaries, JSON summaries, ROC curves, and score plots
+- writes a 2D cumulative contour plot in the `gParT3 Higgs vs QCD` vs `gParT3 Hbb vs Hcc` plane
 - stores a reusable `plot_input.npz` cache for later plot-only redraws
 - uses histogram chunk payloads by default for low-memory HTCondor merges
 - uses `mplhep` with CMS style for figures
@@ -52,9 +54,17 @@ Currently supported scores:
 
 - `gpart_h2cc = Xcc / (Xcc + QCD)`
 - `gpart_h2bb = Xbb / (Xbb + QCD)`
+- `gpart_hbb_vs_hcc = Xbb / (Xbb + Xcc)`
+- `gpart_higgs_vs_qcd = (Xbb + Xcc) / (Xbb + Xcc + QCD)`
 - `pnet_hcc = particleNetWithMass_HccvsQCD`
 - `pnet_xcc = particleNet_XccVsQCD`
 - `pnetlegacy_xcc = particleNetLegacy_Xcc`
+
+Default `auto` score selection is target-dependent:
+
+- `hcc -> gpart_h2cc`
+- `hbb -> gpart_h2bb, gpart_hbb_vs_hcc`
+- `higgs -> gpart_higgs_vs_qcd`
 
 ## Weighting
 
@@ -100,13 +110,46 @@ Each selected AK8 jet is assigned one truth label:
 
 For `target = hcc`:
 
-- signal = `hcc_pure + hcc_contaminated`
-- background = `hcc_partial + hbb_* + top + other`
+- signal = `hcc_pure`
+- background = `hcc_contaminated + hcc_partial + hbb_* + top + other`
 
 For `target = hbb`:
 
-- signal = `hbb_pure + hbb_contaminated`
-- background = `hbb_partial + hcc_* + top + other`
+- signal = `hbb_pure`
+- background = `hbb_contaminated + hbb_partial + hcc_* + top + other`
+
+For `target = higgs`:
+
+- signal = `hbb_pure + hcc_pure`
+- background = `hbb_contaminated + hbb_partial + hcc_contaminated + hcc_partial + top + other`
+
+## 2D Contour Plot
+
+The study also writes a dedicated 2D contour plot:
+
+- `plots/gpart_higgs_vs_qcd__vs__gpart_hbb_vs_hcc__contours.png`
+
+This plot is not tied to one study target. It always shows the weighted fat-jet
+distributions in the score plane:
+
+- x-axis: `gpart_higgs_vs_qcd = (Xbb + Xcc) / (Xbb + Xcc + QCD)`
+- y-axis: `gpart_hbb_vs_hcc = Xbb / (Xbb + Xcc)`
+
+The three plotted truth populations are:
+
+- `hbb_pure`
+- `hcc_pure`
+- `Others = everything except hbb_pure and hcc_pure`
+
+The contours are cumulative enclosed-fraction contours:
+
+- each category is histogrammed separately in the fixed range `[0, 1] x [0, 1]`
+- the 2D histogram is Gaussian-smoothed before thresholding
+- the smoothed histogram is normalized to unit integral for that category
+- contour thresholds correspond to enclosed fractions `10%` through `90%`
+- the plot uses filled `contourf` bands plus overlaid contour lines
+
+The contour plot currently writes a `.png` output only.
 
 ## Config Files
 
@@ -123,6 +166,29 @@ The 2024 config already contains:
 - the 2024 luminosity
 - the `gen_sumw` JSON path
 - the cross section JSON path
+- default study options such as `outdir`, `targets`, `scores`, `sig_effs`, and selection cuts
+- default plot styling options
+
+The study output path is controlled by `study.outdir` in the JSON config.
+
+- if `study.outdir` is relative, it is resolved from the repository root
+- if `study.outdir` is absolute, for example `/eos/user/...`, it is used directly
+- `--outdir` is only needed when you want a temporary override from the command line
+
+Command-line options now follow this priority:
+
+- explicit CLI argument
+- value from the JSON config
+- built-in fallback
+
+For normal analysis updates, you only need to edit the JSON files in `config/`.
+The Python module [src/tthcc_an/config_loader.py](/eos/user/h/hanw/ttHcc/tthcc_an/src/tthcc_an/config_loader.py:133) is only the internal loader/validator for those JSON files.
+
+At the moment the shipped 2024 config defaults to:
+
+- `targets = ["hcc", "hbb", "higgs"]`
+- `scores = ["auto"]`
+- `candidate_strategy = "mass_window_all_jets"`
 
 ## Typical Commands
 
@@ -133,11 +199,10 @@ LCG108
 cd /eos/user/h/hanw/ttHcc/tthcc_an
 
 python scripts/run_boosted_higgs_tagger_study.py \
-  --config config/samples_2024_add_nonttbarmatch_allmc.json \
-  --outdir outputs/boosted_higgs_tagger_study_2024
+  --config config/samples_2024_add_nonttbarmatch_allmc.json
 ```
 
-### Restrict scores or targets
+### Restrict scores or targets temporarily
 
 ```bash
 LCG108
@@ -146,17 +211,17 @@ cd /eos/user/h/hanw/ttHcc/tthcc_an
 python scripts/run_boosted_higgs_tagger_study.py \
   --config config/samples_2024_add_nonttbarmatch_allmc.json \
   --targets hcc \
-  --scores gpart_h2cc pnet_hcc \
+  --scores gpart_h2cc \
   --sig-effs 0.3 0.5 0.7 \
   --outdir outputs/boosted_higgs_tagger_study_2024_hcc
 ```
 
-### Use a different candidate strategy
+### Use a different candidate strategy temporarily
 
 ```bash
 python scripts/run_boosted_higgs_tagger_study.py \
   --config config/samples_2024_add_nonttbarmatch_allmc.json \
-  --candidate-strategy mass_window_leading_pt \
+  --candidate-strategy mass_window_all_jets \
   --msd-window-low 100 \
   --msd-window-high 150 \
   --outdir outputs/boosted_higgs_tagger_study_2024_msd
@@ -177,6 +242,7 @@ In addition to the truth-category plots, the script now also writes process-grou
 - `plots/*__background_process_score.png`
 - `plots/*__background_process_wp.png`
 - `plots/*__significance_scan.png`
+- `plots/gpart_higgs_vs_qcd__vs__gpart_hbb_vs_hcc__contours.png`
 
 The text summaries include:
 
@@ -202,7 +268,7 @@ The CSV tables also contain:
 
 After a full run, the script stores:
 
-- `plot_input.npz`
+- `<study.outdir>/plot_input.npz`
 
 This is a slim cache containing:
 
@@ -220,9 +286,8 @@ cd /eos/user/h/hanw/ttHcc/tthcc_an
 
 python scripts/run_boosted_higgs_tagger_study.py \
   --config config/samples_2024_add_nonttbarmatch_allmc.json \
-  --plot-input outputs/boosted_higgs_tagger_study_2024/plot_input.npz \
-  --plot-only \
-  --outdir outputs/boosted_higgs_tagger_study_2024
+  --plot-input /path/to/<study.outdir>/plot_input.npz \
+  --plot-only
 ```
 
 ### Redraw plots only with smaller fonts
@@ -233,9 +298,8 @@ cd /eos/user/h/hanw/ttHcc/tthcc_an
 
 python scripts/run_boosted_higgs_tagger_study.py \
   --config config/samples_2024_add_nonttbarmatch_allmc.json \
-  --plot-input outputs/boosted_higgs_tagger_study_2024/plot_input.npz \
+  --plot-input /path/to/<study.outdir>/plot_input.npz \
   --plot-only \
-  --outdir outputs/boosted_higgs_tagger_study_2024 \
   --plot-title-size 11 \
   --plot-label-size 9.5 \
   --plot-tick-size 8.5 \
@@ -257,7 +321,6 @@ cd /eos/user/h/hanw/ttHcc/tthcc_an
 python scripts/run_boosted_higgs_tagger_study.py \
   --config config/samples_2024_add_nonttbarmatch_allmc.json \
   --merge-chunks 'condor/<tag>/chunk_outputs/chunk_*.npz' \
-  --outdir outputs/boosted_higgs_tagger_study_2024 \
   --skip-plots
 ```
 
@@ -266,6 +329,14 @@ This is useful after changing:
 - summary formatting
 - table content
 - significance columns
+- target definitions
+- score definitions
+
+It is also the recommended refresh path after changing study logic such as:
+
+- which truth categories belong to `signal` or `background`
+- default target lists or default scores
+- histogram-based plot content
 
 It will also regenerate `plot_input.npz`.
 
@@ -284,6 +355,10 @@ python scripts/run_boosted_higgs_tagger_study.py \
 
 This is useful if an older output directory does not yet have `plot_input.npz`.
 
+If you changed plotting code only, `--plot-only` is usually enough. If you
+changed target definitions, summary logic, or histogram payload content, prefer
+`--merge-chunks` without `--plot-only` so tables and summaries are rebuilt too.
+
 ## HTCondor Workflow
 
 For large studies on lxplus, the recommended mode is the chunked HTCondor DAG:
@@ -293,13 +368,15 @@ For large studies on lxplus, the recommended mode is the chunked HTCondor DAG:
 
 Recommended submission:
 
+If `study.outdir` is already set in the JSON config, the default command only
+needs `--config` plus the batch-resource settings:
+
 ```bash
 python scripts/submit_boosted_higgs_tagger_condor.py \
   --config config/samples_2024_add_nonttbarmatch_allmc.json \
-  --outdir outputs/boosted_higgs_tagger_study_2024 \
   --files-per-chunk 60 \
   --request-memory "8 GB" \
-  --merge-request-memory "16 GB" \
+  --merge-request-memory "24 GB" \
   --job-flavour workday \
   --merge-job-flavour tomorrow \
   --submit
@@ -315,6 +392,7 @@ The workflow directory under `condor/<tag>/` contains:
 - `chunks.sub`: chunk-job submit file
 - `merge.sub`: merge-job submit file
 - `workflow.dag`: DAG file
+- `job_metadata.json`: summary of the prepared workflow, final output path, and submit settings
 
 Because this repository and its outputs live on EOS, the submission helper uses
 CERN `EosSubmit`.
@@ -322,21 +400,95 @@ CERN `EosSubmit`.
 If you want to prepare the workflow without immediate submission, omit
 `--submit`.
 
+After submission, the helper prints:
+
+- `Prepared workflow directory`
+- `Metadata file`
+- `Final study output`
+
+Keep the workflow directory, because it is the main place to inspect Condor
+status and logs for that run.
+
 You can also forward extra study arguments after `--`, for example:
 
 ```bash
 python scripts/submit_boosted_higgs_tagger_condor.py \
   --config config/samples_2024_add_nonttbarmatch_allmc.json \
-  --outdir outputs/boosted_higgs_tagger_study_2024 \
   --files-per-chunk 60 \
   --request-memory "8 GB" \
   --merge-request-memory "24 GB" \
-  -- --scores gpart_h2cc gpart_h2bb
+  -- --targets hcc hbb higgs
+```
+
+### Check Condor Status
+
+The fastest first check is:
+
+```bash
+condor_q -nobatch $USER
+```
+
+If you want an auto-refreshing view:
+
+```bash
+watch -n 30 'condor_q -nobatch $USER'
+```
+
+When jobs are submitted through `EosSubmit`, they may land on a remote schedd.
+In that case, plain `condor_q` can show `0 jobs` even though the workflow is
+running. Then use:
+
+```bash
+condor_q -global -nobatch $USER
+```
+
+Once you know the schedd hostname, for example `<schedd>`, query that schedd
+directly:
+
+```bash
+condor_q -name <schedd> -nobatch $USER
+```
+
+To keep watching that schedd:
+
+```bash
+watch -n 30 'condor_q -name <schedd> -nobatch $USER'
+```
+
+If you want to follow one specific workflow, first note the workflow directory
+printed at submission time, for example `condor/<tag>/`. Then inspect:
+
+```bash
+tail -f condor/<tag>/workflow.dag.dagman.out
+```
+
+and, when the merge stage starts:
+
+```bash
+tail -f condor/<tag>/logs/merge/job.*.log
+```
+
+Useful workflow files are:
+
+- `condor/<tag>/job_metadata.json`
+- `condor/<tag>/workflow.dag.dagman.out`
+- `condor/<tag>/logs/chunks/`
+- `condor/<tag>/logs/merge/`
+
+If you need to remove a workflow, first identify the cluster ids with
+`condor_q`, then run:
+
+```bash
+condor_rm -name <schedd> <cluster_id_1> <cluster_id_2>
 ```
 
 ## Manual Chunk Export / Merge
 
 For debugging, manual chunk export and merge are also supported.
+
+These examples keep `outdir` on the command line because they are usually
+temporary debug runs. For regular studies, prefer setting `study.outdir` in the
+config file.
 
 ### Export one chunk
 
@@ -344,7 +496,7 @@ For debugging, manual chunk export and merge are also supported.
 LCG108
 python scripts/run_boosted_higgs_tagger_study.py \
   --config config/samples_2024_add_nonttbarmatch_allmc.json \
-  --scores gpart_h2cc gpart_h2bb \
+  --scores gpart_h2cc gpart_h2bb gpart_higgs_vs_qcd \
   --chunk-payload-mode histogram \
   --export-chunk outputs/debug/chunk_0000.npz \
   --outdir outputs/debug/final
@@ -356,7 +508,7 @@ python scripts/run_boosted_higgs_tagger_study.py \
 LCG108
 python scripts/run_boosted_higgs_tagger_study.py \
   --config config/samples_2024_add_nonttbarmatch_allmc.json \
-  --scores gpart_h2cc gpart_h2bb \
+  --scores gpart_h2cc gpart_h2bb gpart_higgs_vs_qcd \
   --merge-chunks 'outputs/debug/*.npz' \
   --outdir outputs/debug/final
 ```

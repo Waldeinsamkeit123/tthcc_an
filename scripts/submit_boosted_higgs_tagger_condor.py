@@ -7,12 +7,23 @@ import glob
 import json
 import shlex
 import subprocess
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+SRC_ROOT = REPO_ROOT / "src"
+if str(SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(SRC_ROOT))
+
+from tthcc_an.config_loader import (
+    expand_file_patterns as _expand_file_patterns,
+    load_json_maybe_with_comments as _load_json_maybe_with_comments,
+    resolve_output_dir as _resolve_output_dir,
+)
+
 DEFAULT_LCG_SETUP = "/cvmfs/sft.cern.ch/lcg/views/LCG_108/x86_64-el9-gcc15-opt/setup.sh"
 DEFAULT_MERGE_REQUEST_MEMORY = "16 GB"
 
@@ -32,8 +43,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--outdir",
-        required=True,
-        help="Final analysis output directory passed to the study script.",
+        default=None,
+        help="Final analysis output directory. Defaults to study.outdir from the config.",
     )
     parser.add_argument(
         "--workflow-mode",
@@ -226,7 +237,7 @@ def chunked(items: list[str], size: int) -> list[list[str]]:
 
 
 def load_expanded_samples(config_path: Path) -> dict[str, Any]:
-    payload = load_json_maybe_with_comments(config_path)
+    payload = _load_json_maybe_with_comments(config_path)
     samples = payload.get("samples", [])
     if not samples:
         raise ValueError(f"No samples found in configuration: {config_path}")
@@ -234,7 +245,7 @@ def load_expanded_samples(config_path: Path) -> dict[str, Any]:
     expanded_samples: list[dict[str, Any]] = []
     for entry in samples:
         expanded_entry = dict(entry)
-        expanded_entry["files"] = expand_file_patterns(list(entry["files"]))
+        expanded_entry["files"] = _expand_file_patterns(list(entry["files"]))
         if not expanded_entry["files"]:
             raise ValueError(f"No files found for sample '{entry.get('name', 'unknown')}'.")
         expanded_samples.append(expanded_entry)
@@ -632,7 +643,7 @@ def main() -> None:
     condor_dir.mkdir(parents=True, exist_ok=True)
 
     config_path = Path(args.config).resolve()
-    outdir = Path(args.outdir).resolve()
+    outdir = Path(_resolve_output_dir(config_path, args.outdir, REPO_ROOT)).resolve()
     metadata_path = condor_dir / "job_metadata.json"
 
     if args.workflow_mode == "single":
