@@ -14,7 +14,7 @@ import matplotlib.ticker as mticker
 import mplhep as hep
 import numpy as np
 from matplotlib.lines import Line2D
-from matplotlib.colors import LinearSegmentedColormap, to_rgba
+from matplotlib.colors import ListedColormap, to_rgba
 from scipy.ndimage import gaussian_filter
 
 from tthcc_an.definitions import (
@@ -69,6 +69,15 @@ def build_plot_style(args: argparse.Namespace) -> PlotStyle:
 
 
 def _cms_label(ax: plt.Axes, plot_style: PlotStyle) -> None:
+    hep.cms.label(
+        data=False,
+        ax=ax,
+        fontsize=plot_style.cms_size,
+        rlabel="2024 (13.6 TeV)",
+    )
+
+
+def private_cms_label(ax: plt.Axes, plot_style: PlotStyle) -> None:
     hep.cms.label(
         label="Private Work",
         data=False,
@@ -202,16 +211,20 @@ def _filled_contour_levels(contour_levels: np.ndarray, hist_norm: np.ndarray) ->
     return np.concatenate([contour_levels, np.array([max_density], dtype=np.float64)])
 
 
-def _make_alpha_cmap(base_color: str, name: str) -> LinearSegmentedColormap:
+def _make_alpha_cmap(base_color: str, name: str, n_intervals: int) -> ListedColormap:
     rgba = np.asarray(to_rgba(base_color), dtype=np.float64)
+    n_steps = max(int(n_intervals), 1)
+    if n_steps == 1:
+        alpha_values = np.array([0.68], dtype=np.float64)
+    else:
+        # Keep the outermost 80%-90% shell light, while making each inner shell
+        # progressively darker and visually distinct.
+        alpha_values = np.linspace(0.18, 0.92, n_steps, dtype=np.float64)
     colors = [
-        (float(rgba[0]), float(rgba[1]), float(rgba[2]), 0.00),
-        (float(rgba[0]), float(rgba[1]), float(rgba[2]), 0.30),
-        (float(rgba[0]), float(rgba[1]), float(rgba[2]), 0.55),
-        (float(rgba[0]), float(rgba[1]), float(rgba[2]), 0.78),
-        (float(rgba[0]), float(rgba[1]), float(rgba[2]), 0.96),
+        (float(rgba[0]), float(rgba[1]), float(rgba[2]), float(alpha))
+        for alpha in alpha_values
     ]
-    return LinearSegmentedColormap.from_list(name, colors, N=256)
+    return ListedColormap(colors, name=name)
 
 
 def _sorted_contour_histograms(
@@ -414,7 +427,11 @@ def _plot_globalpart3_contours_from_histograms(
         if contour_levels.size == 0 or filled_levels.size <= 1:
             continue
         plotted_categories.append(category)
-        cmap = _make_alpha_cmap(category["color"], f"{category['key']}_alpha_cmap")
+        cmap = _make_alpha_cmap(
+            category["color"],
+            f"{category['key']}_alpha_cmap",
+            len(filled_levels) - 1,
+        )
         ax.contourf(
             x_centers,
             y_centers,
@@ -458,7 +475,7 @@ def _plot_globalpart3_contours_from_histograms(
         handlelength=1.8,
     )
     _annotate_globalpart3_regions(ax, region_efficiencies, plot_style)
-    _cms_label(ax, plot_style)
+    private_cms_label(ax, plot_style)
     _save_plot(fig, outpath, plot_style, left=0.14, right=0.97, bottom=0.14, top=0.87, save_pdf=False)
 
 
