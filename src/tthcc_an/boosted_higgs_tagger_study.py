@@ -23,6 +23,7 @@ from tthcc_an.config_loader import (
     DEFAULT_TREE_NAME,
     DEFAULT_UPROOT_STEP_SIZE,
     DEFAULT_WEIGHT_BRANCH,
+    DEFAULT_XBB_VS_XCC_REGION_PRESET,
     SampleConfig,
     StudyConfig,
     load_json_maybe_with_comments,
@@ -33,11 +34,12 @@ from tthcc_an.definitions import (
     COUNT_FIELDS,
     FATJET_FIELDS,
     FLOAT_FIELDS,
-    GLOBALPART3_CONTOUR_PLOT,
     SCORE_INPUT_FIELDS,
     SCORE_LABELS,
     TARGET_DEFINITIONS,
     TRUTH_LABEL_TO_CODE,
+    XBB_VS_XCC_REGION_PRESETS,
+    build_globalpart3_contour_plots,
     build_process_entries_from_samples as _build_process_entries_from_samples,
     build_process_entries_from_summaries as _build_process_entries_from_summaries,
 )
@@ -59,12 +61,17 @@ from tthcc_an.payload_io import (
 )
 from tthcc_an.plotting import (
     build_plot_style,
+    compute_fixed_other_efficiency_scan_from_hist_payload,
+    compute_fixed_other_efficiency_scan_from_raw,
+    compute_fixed_x_ycut_scan_from_hist_payload,
+    compute_fixed_x_ycut_scan_from_raw,
     compute_globalpart3_region_efficiencies_from_hist_payload,
     compute_globalpart3_region_efficiencies_from_raw,
     plot_background_process_score_distribution,
     plot_background_process_score_distribution_from_hist,
     plot_background_process_working_points,
     plot_background_process_working_points_from_hist,
+    plot_fixed_x_ycut_scan,
     plot_globalpart3_contours,
     plot_globalpart3_contours_from_hist,
     plot_roc_curve,
@@ -72,7 +79,14 @@ from tthcc_an.plotting import (
     plot_score_distribution_from_hist,
     plot_significance_scan,
 )
-from tthcc_an.reporting import format_contour_region_efficiency_text, format_summary_text, write_csv, write_json
+from tthcc_an.reporting import (
+    format_contour_region_efficiency_text,
+    format_fixed_other_efficiency_scan_text,
+    format_fixed_x_ycut_scan_text,
+    format_summary_text,
+    write_csv,
+    write_json,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -195,6 +209,15 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Number of score bins used by histogram chunk payloads and histogram-based merges. Defaults to study.score_hist_bins from config.",
     )
+    parser.add_argument(
+        "--xbb-vs-xcc-region-preset",
+        choices=sorted(XBB_VS_XCC_REGION_PRESETS),
+        default=None,
+        help=(
+            "Region preset for the gParT3 Higgs-vs-QCD vs Xbb-vs-Xcc contour plot. "
+            "Defaults to study.xbb_vs_xcc_region_preset from config."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -301,6 +324,18 @@ def apply_config_defaults_to_args(args: argparse.Namespace, study_config: StudyC
             DEFAULT_SCORE_HIST_BINS,
         )
     )
+    effective_args.xbb_vs_xcc_region_preset = str(
+        _configured_value(
+            args.xbb_vs_xcc_region_preset,
+            study_config.study_defaults.get("xbb_vs_xcc_region_preset"),
+            DEFAULT_XBB_VS_XCC_REGION_PRESET,
+        )
+    ).strip().lower()
+    if effective_args.xbb_vs_xcc_region_preset not in XBB_VS_XCC_REGION_PRESETS:
+        raise ValueError(
+            "Config field 'study.xbb_vs_xcc_region_preset' must be one of: "
+            + ", ".join(sorted(XBB_VS_XCC_REGION_PRESETS))
+        )
     effective_args.plot_title_size = float(
         _configured_value(args.plot_title_size, study_config.plot_defaults.get("title_size"), DEFAULT_PLOT_OPTIONS["title_size"])
     )
@@ -324,6 +359,12 @@ def apply_config_defaults_to_args(args: argparse.Namespace, study_config: StudyC
         _configured_value(args.plot_dpi, study_config.plot_defaults.get("dpi"), DEFAULT_PLOT_OPTIONS["dpi"])
     )
     return effective_args
+
+
+def _selected_contour_plot_defs(args: argparse.Namespace) -> list[dict[str, Any]]:
+    return build_globalpart3_contour_plots(
+        xbb_vs_xcc_region_preset=str(args.xbb_vs_xcc_region_preset),
+    )
 
 
 def load_normalization_metadata(
@@ -562,9 +603,14 @@ def add_truth_and_scores(data: dict[str, np.ndarray]) -> None:
             copy=False,
         )
     if {"globalParT3_Xbb", "globalParT3_Xcc"} <= data.keys():
-        data["gpart_hbb_vs_hcc"] = _safe_divide(
+        data["gpart_xbb_vs_xcc"] = _safe_divide(
             data["globalParT3_Xbb"],
             data["globalParT3_Xbb"] + data["globalParT3_Xcc"],
+        ).astype(FLOAT_STORAGE_DTYPE, copy=False)
+    if {"gpart_h2bb", "gpart_h2cc"} <= data.keys():
+        data["gpart_hbb_vs_hcc"] = _safe_divide(
+            data["gpart_h2bb"],
+            data["gpart_h2bb"] + data["gpart_h2cc"],
         ).astype(FLOAT_STORAGE_DTYPE, copy=False)
     if {"globalParT3_Xbb", "globalParT3_Xcc", "globalParT3_QCD"} <= data.keys():
         data["gpart_higgs_vs_qcd"] = _safe_divide(
@@ -639,9 +685,10 @@ def _select_scores_to_keep(args: argparse.Namespace, available_scores: list[str]
     selected = [score for score in _resolve_requested_scores(args) if score in available_scores]
     if not selected:
         raise ValueError(f"No requested scores are available. Available scores: {', '.join(available_scores)}")
-    for score_name in [GLOBALPART3_CONTOUR_PLOT["x_score"], GLOBALPART3_CONTOUR_PLOT["y_score"]]:
-        if score_name in available_scores and score_name not in selected:
-            selected.append(score_name)
+    for plot_def in _selected_contour_plot_defs(args):
+        for score_name in [str(plot_def["x_score"]), str(plot_def["y_score"])]:
+            if score_name in available_scores and score_name not in selected:
+                selected.append(score_name)
     return selected
 
 
@@ -724,21 +771,25 @@ def render_plots(
         and data["process_code"].shape == data["truth_code"].shape
         and len(process_entries) > 0
     )
-    contour_x_score = GLOBALPART3_CONTOUR_PLOT["x_score"]
-    contour_y_score = GLOBALPART3_CONTOUR_PLOT["y_score"]
-    if contour_x_score in data and contour_y_score in data:
+    contour_studies = study_payload.setdefault("globalpart3_contours", {})
+    for plot_def in _selected_contour_plot_defs(effective_args):
+        contour_x_score = str(plot_def["x_score"])
+        contour_y_score = str(plot_def["y_score"])
+        if contour_x_score not in data or contour_y_score not in data:
+            continue
         plot_globalpart3_contours(
             x_scores=data[contour_x_score],
             y_scores=data[contour_y_score],
             truth_codes=data["truth_code"],
             weights=data["weight"],
-            outpath=outdirs["plots"] / f"{GLOBALPART3_CONTOUR_PLOT['filename_stem']}.png",
+            plot_def=plot_def,
+            outpath=outdirs["plots"] / f"{plot_def['filename_stem']}.png",
             plot_style=plot_style,
         )
-        study_payload["globalpart3_contours"] = {
+        contour_studies[str(plot_def["key"])] = {
             "x_score": contour_x_score,
             "y_score": contour_y_score,
-            "filename_stem": GLOBALPART3_CONTOUR_PLOT["filename_stem"],
+            "filename_stem": str(plot_def["filename_stem"]),
         }
 
     for target in effective_args.targets:
@@ -827,17 +878,21 @@ def render_histogram_plots(
     available_scores = list(histogram_payload["available_scores"])
     hist_edges = np.asarray(histogram_payload["hist_edges"], dtype=np.float64)
     process_entries = list(histogram_payload.get("process_entries", []))
-    contour_payload = histogram_payload.get("contour_payloads", {}).get(GLOBALPART3_CONTOUR_PLOT["key"])
-    if contour_payload is not None:
+    contour_studies = study_payload.setdefault("globalpart3_contours", {})
+    for plot_def in _selected_contour_plot_defs(effective_args):
+        contour_payload = histogram_payload.get("contour_payloads", {}).get(str(plot_def["key"]))
+        if contour_payload is None:
+            continue
         plot_globalpart3_contours_from_hist(
             contour_payload=contour_payload,
-            outpath=outdirs["plots"] / f"{GLOBALPART3_CONTOUR_PLOT['filename_stem']}.png",
+            plot_def=plot_def,
+            outpath=outdirs["plots"] / f"{plot_def['filename_stem']}.png",
             plot_style=plot_style,
         )
-        study_payload["globalpart3_contours"] = {
-            "x_score": contour_payload.get("x_score", GLOBALPART3_CONTOUR_PLOT["x_score"]),
-            "y_score": contour_payload.get("y_score", GLOBALPART3_CONTOUR_PLOT["y_score"]),
-            "filename_stem": contour_payload.get("filename_stem", GLOBALPART3_CONTOUR_PLOT["filename_stem"]),
+        contour_studies[str(plot_def["key"])] = {
+            "x_score": contour_payload.get("x_score", plot_def["x_score"]),
+            "y_score": contour_payload.get("y_score", plot_def["y_score"]),
+            "filename_stem": contour_payload.get("filename_stem", plot_def["filename_stem"]),
         }
 
     for target in effective_args.targets:
@@ -909,90 +964,243 @@ def render_histogram_plots(
                 target_payload[score_name]["process_groups"] = [entry["process"] for entry in process_entries]
 
 
-def _globalpart3_region_output_paths(outdirs: dict[str, Path]) -> tuple[Path, Path]:
-    stem = f"{GLOBALPART3_CONTOUR_PLOT['filename_stem']}__region_efficiencies"
+def _globalpart3_region_output_paths(plot_def: dict[str, Any], outdirs: dict[str, Path]) -> tuple[Path, Path]:
+    stem = f"{plot_def['filename_stem']}__region_efficiencies"
     return outdirs["summaries"] / f"{stem}.txt", outdirs["summaries"] / f"{stem}.json"
 
 
-def _globalpart3_region_metadata(region_efficiencies: dict[str, dict[str, float]]) -> dict[str, Any]:
+def _globalpart3_fixed_other_scan_output_paths(plot_def: dict[str, Any], outdirs: dict[str, Path]) -> tuple[Path, Path]:
+    stem = f"{plot_def['filename_stem']}__fixed_other_efficiency_scan"
+    return outdirs["summaries"] / f"{stem}.txt", outdirs["summaries"] / f"{stem}.json"
+
+
+def _globalpart3_fixed_x_ycut_scan_output_paths(plot_def: dict[str, Any], outdirs: dict[str, Path]) -> tuple[Path, Path, Path]:
+    stem = f"{plot_def['filename_stem']}__fixed_x_ycut_scan"
+    return (
+        outdirs["summaries"] / f"{stem}.txt",
+        outdirs["summaries"] / f"{stem}.json",
+        outdirs["plots"] / f"{stem}.png",
+    )
+
+
+def _globalpart3_region_metadata(
+    plot_def: dict[str, Any],
+    region_efficiencies: dict[str, dict[str, float]],
+) -> dict[str, Any]:
+    region_definitions = dict(plot_def.get("region_definitions", {}))
     return {
-        "x_score": GLOBALPART3_CONTOUR_PLOT["x_score"],
-        "y_score": GLOBALPART3_CONTOUR_PLOT["y_score"],
+        "key": plot_def["key"],
+        "x_score": plot_def["x_score"],
+        "y_score": plot_def["y_score"],
+        "filename_stem": plot_def["filename_stem"],
+        "fixed_x_cut": plot_def.get("fixed_x_cut"),
+        "region_preset": plot_def.get("region_preset"),
+        "region_preset_label": plot_def.get("region_preset_label"),
+        "region_preset_description": plot_def.get("region_preset_description"),
         "weight_definition": "analysis_weight = sample_norm * abs(event_weight_raw)",
         "normalization": "weighted yield in region / total weighted yield of that category",
-        "region_definitions": {
-            "hcc": {
-                "selection": "(x > 0.45) and (0.0 < y <= 0.7)",
-                "x_min_exclusive": 0.45,
-                "y_min_exclusive": 0.0,
-                "y_max_inclusive": 0.7,
-            },
-            "hbb": {
-                "selection": "(x > 0.75) and (0.7 < y <= 1.0)",
-                "x_min_exclusive": 0.75,
-                "y_min_exclusive": 0.7,
-                "y_max_inclusive": 1.0,
-            },
-            "qcd_others": {
-                "selection": "not(Hcc region or Hbb region)",
-            },
-        },
+        "region_definitions": region_definitions,
+        "boundary_segments": list(plot_def.get("boundary_segments", [])),
         "region_efficiencies": region_efficiencies,
     }
 
 
+def _globalpart3_fixed_other_scan_metadata(
+    plot_def: dict[str, Any],
+    scan_payload: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "key": plot_def["key"],
+        "x_score": plot_def["x_score"],
+        "y_score": plot_def["y_score"],
+        "filename_stem": plot_def["filename_stem"],
+        "fixed_x_cut": plot_def.get("fixed_x_cut"),
+        "region_preset": plot_def.get("region_preset"),
+        "region_preset_label": plot_def.get("region_preset_label"),
+        "region_preset_description": plot_def.get("region_preset_description"),
+        "weight_definition": "analysis_weight = sample_norm * abs(event_weight_raw)",
+        "normalization": "weighted yield in region / total weighted yield of that category",
+        "scan_mode": "keep y-region fixed and vary only the x-threshold",
+        "region_definitions": dict(plot_def.get("region_definitions", {})),
+        "fixed_other_efficiency_scan": scan_payload,
+    }
+
+
+def _globalpart3_fixed_x_ycut_scan_metadata(
+    plot_def: dict[str, Any],
+    scan_payload: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "key": plot_def["key"],
+        "x_score": plot_def["x_score"],
+        "y_score": plot_def["y_score"],
+        "filename_stem": plot_def["filename_stem"],
+        "fixed_x_cut": plot_def.get("fixed_x_cut"),
+        "region_preset": plot_def.get("region_preset"),
+        "region_preset_label": plot_def.get("region_preset_label"),
+        "region_preset_description": plot_def.get("region_preset_description"),
+        "weight_definition": "analysis_weight = sample_norm * abs(event_weight_raw)",
+        "normalization": "weighted yield in region / total weighted yield of that category",
+        "scan_mode": "fix x threshold and scan y partition between Hcc and Hbb regions",
+        "region_definitions": dict(plot_def.get("region_definitions", {})),
+        "fixed_x_ycut_scan": scan_payload,
+    }
+
+
 def _write_globalpart3_region_outputs(
+    plot_def: dict[str, Any],
     region_efficiencies: dict[str, dict[str, float]],
     study_payload: dict[str, Any],
     outdirs: dict[str, Path],
 ) -> None:
     if not region_efficiencies:
         return
-    contour_payload = study_payload.setdefault(
-        "globalpart3_contours",
+    contour_payloads = study_payload.setdefault("globalpart3_contours", {})
+    contour_payload = contour_payloads.setdefault(
+        str(plot_def["key"]),
         {
-            "x_score": GLOBALPART3_CONTOUR_PLOT["x_score"],
-            "y_score": GLOBALPART3_CONTOUR_PLOT["y_score"],
-            "filename_stem": GLOBALPART3_CONTOUR_PLOT["filename_stem"],
+            "key": plot_def["key"],
+            "x_score": plot_def["x_score"],
+            "y_score": plot_def["y_score"],
+            "filename_stem": plot_def["filename_stem"],
+            "fixed_x_cut": plot_def.get("fixed_x_cut"),
+            "region_preset": plot_def.get("region_preset"),
+            "region_preset_label": plot_def.get("region_preset_label"),
+            "region_preset_description": plot_def.get("region_preset_description"),
         },
     )
     contour_payload["region_efficiencies"] = region_efficiencies
-    region_summary = _globalpart3_region_metadata(region_efficiencies)
-    txt_path, json_path = _globalpart3_region_output_paths(outdirs)
-    txt_path.write_text(format_contour_region_efficiency_text(region_efficiencies), encoding="utf-8")
+    region_summary = _globalpart3_region_metadata(plot_def, region_efficiencies)
+    txt_path, json_path = _globalpart3_region_output_paths(plot_def, outdirs)
+    txt_path.write_text(format_contour_region_efficiency_text(plot_def, region_efficiencies), encoding="utf-8")
     write_json(json_path, region_summary)
+
+
+def _write_globalpart3_fixed_other_scan_outputs(
+    plot_def: dict[str, Any],
+    scan_payload: dict[str, Any],
+    study_payload: dict[str, Any],
+    outdirs: dict[str, Path],
+) -> None:
+    contour_payloads = study_payload.setdefault("globalpart3_contours", {})
+    contour_payload = contour_payloads.setdefault(
+        str(plot_def["key"]),
+        {
+            "key": plot_def["key"],
+            "x_score": plot_def["x_score"],
+            "y_score": plot_def["y_score"],
+            "filename_stem": plot_def["filename_stem"],
+            "fixed_x_cut": plot_def.get("fixed_x_cut"),
+            "region_preset": plot_def.get("region_preset"),
+            "region_preset_label": plot_def.get("region_preset_label"),
+            "region_preset_description": plot_def.get("region_preset_description"),
+        },
+    )
+    contour_payload["fixed_other_efficiency_scan"] = scan_payload
+    scan_summary = _globalpart3_fixed_other_scan_metadata(plot_def, scan_payload)
+    txt_path, json_path = _globalpart3_fixed_other_scan_output_paths(plot_def, outdirs)
+    txt_path.write_text(format_fixed_other_efficiency_scan_text(plot_def, scan_payload), encoding="utf-8")
+    write_json(json_path, scan_summary)
+
+
+def _write_globalpart3_fixed_x_ycut_scan_outputs(
+    plot_def: dict[str, Any],
+    scan_payload: dict[str, Any],
+    study_payload: dict[str, Any],
+    outdirs: dict[str, Path],
+    plot_style: Any,
+) -> None:
+    contour_payloads = study_payload.setdefault("globalpart3_contours", {})
+    contour_payload = contour_payloads.setdefault(
+        str(plot_def["key"]),
+        {
+            "key": plot_def["key"],
+            "x_score": plot_def["x_score"],
+            "y_score": plot_def["y_score"],
+            "filename_stem": plot_def["filename_stem"],
+            "fixed_x_cut": plot_def.get("fixed_x_cut"),
+            "region_preset": plot_def.get("region_preset"),
+            "region_preset_label": plot_def.get("region_preset_label"),
+            "region_preset_description": plot_def.get("region_preset_description"),
+        },
+    )
+    contour_payload["fixed_x_ycut_scan"] = scan_payload
+    scan_summary = _globalpart3_fixed_x_ycut_scan_metadata(plot_def, scan_payload)
+    txt_path, json_path, plot_path = _globalpart3_fixed_x_ycut_scan_output_paths(plot_def, outdirs)
+    txt_path.write_text(format_fixed_x_ycut_scan_text(plot_def, scan_payload), encoding="utf-8")
+    write_json(json_path, scan_summary)
+    plot_fixed_x_ycut_scan(scan_payload, plot_def, plot_path, plot_style)
 
 
 def maybe_write_globalpart3_region_outputs_from_raw(
     data: dict[str, np.ndarray],
     study_payload: dict[str, Any],
     outdirs: dict[str, Path],
+    plot_style: Any,
+    contour_plot_defs: list[dict[str, Any]],
 ) -> None:
-    contour_x_score = GLOBALPART3_CONTOUR_PLOT["x_score"]
-    contour_y_score = GLOBALPART3_CONTOUR_PLOT["y_score"]
-    if contour_x_score not in data or contour_y_score not in data:
-        return
     if "truth_code" not in data or "weight" not in data:
         return
-    region_efficiencies = compute_globalpart3_region_efficiencies_from_raw(
-        x_scores=np.asarray(data[contour_x_score], dtype=np.float64),
-        y_scores=np.asarray(data[contour_y_score], dtype=np.float64),
-        truth_codes=np.asarray(data["truth_code"], dtype=np.int32),
-        weights=np.asarray(data["weight"], dtype=np.float64),
-    )
-    _write_globalpart3_region_outputs(region_efficiencies, study_payload, outdirs)
+    for plot_def in contour_plot_defs:
+        contour_x_score = str(plot_def["x_score"])
+        contour_y_score = str(plot_def["y_score"])
+        if contour_x_score not in data or contour_y_score not in data:
+            continue
+        region_efficiencies = compute_globalpart3_region_efficiencies_from_raw(
+            x_scores=np.asarray(data[contour_x_score], dtype=np.float64),
+            y_scores=np.asarray(data[contour_y_score], dtype=np.float64),
+            truth_codes=np.asarray(data["truth_code"], dtype=np.int32),
+            weights=np.asarray(data["weight"], dtype=np.float64),
+            plot_def=plot_def,
+        )
+        _write_globalpart3_region_outputs(plot_def, region_efficiencies, study_payload, outdirs)
+        fixed_other_scan = compute_fixed_other_efficiency_scan_from_raw(
+            x_scores=np.asarray(data[contour_x_score], dtype=np.float64),
+            y_scores=np.asarray(data[contour_y_score], dtype=np.float64),
+            truth_codes=np.asarray(data["truth_code"], dtype=np.int32),
+            weights=np.asarray(data["weight"], dtype=np.float64),
+            plot_def=plot_def,
+        )
+        _write_globalpart3_fixed_other_scan_outputs(plot_def, fixed_other_scan, study_payload, outdirs)
+        fixed_x_ycut_scan = compute_fixed_x_ycut_scan_from_raw(
+            x_scores=np.asarray(data[contour_x_score], dtype=np.float64),
+            y_scores=np.asarray(data[contour_y_score], dtype=np.float64),
+            truth_codes=np.asarray(data["truth_code"], dtype=np.int32),
+            weights=np.asarray(data["weight"], dtype=np.float64),
+            plot_def=plot_def,
+        )
+        _write_globalpart3_fixed_x_ycut_scan_outputs(
+            plot_def,
+            fixed_x_ycut_scan,
+            study_payload,
+            outdirs,
+            plot_style,
+        )
 
 
 def maybe_write_globalpart3_region_outputs_from_hist(
     histogram_payload: dict[str, Any],
     study_payload: dict[str, Any],
     outdirs: dict[str, Path],
+    plot_style: Any,
+    contour_plot_defs: list[dict[str, Any]],
 ) -> None:
-    contour_payload = histogram_payload.get("contour_payloads", {}).get(GLOBALPART3_CONTOUR_PLOT["key"])
-    if contour_payload is None:
-        return
-    region_efficiencies = compute_globalpart3_region_efficiencies_from_hist_payload(contour_payload)
-    _write_globalpart3_region_outputs(region_efficiencies, study_payload, outdirs)
+    for plot_def in contour_plot_defs:
+        contour_payload = histogram_payload.get("contour_payloads", {}).get(str(plot_def["key"]))
+        if contour_payload is None:
+            continue
+        region_efficiencies = compute_globalpart3_region_efficiencies_from_hist_payload(contour_payload, plot_def=plot_def)
+        _write_globalpart3_region_outputs(plot_def, region_efficiencies, study_payload, outdirs)
+        fixed_other_scan = compute_fixed_other_efficiency_scan_from_hist_payload(contour_payload, plot_def=plot_def)
+        _write_globalpart3_fixed_other_scan_outputs(plot_def, fixed_other_scan, study_payload, outdirs)
+        fixed_x_ycut_scan = compute_fixed_x_ycut_scan_from_hist_payload(contour_payload, plot_def=plot_def)
+        _write_globalpart3_fixed_x_ycut_scan_outputs(
+            plot_def,
+            fixed_x_ycut_scan,
+            study_payload,
+            outdirs,
+            plot_style,
+        )
 
 
 def finalize_study(
@@ -1004,6 +1212,7 @@ def finalize_study(
     available_scores = get_available_scores(data)
 
     outdirs = make_output_dirs(Path(effective_args.outdir))
+    plot_style = build_plot_style(effective_args)
     study_payload: dict[str, Any] = {
         "available_scores": available_scores,
         "sample_summaries": sample_summaries,
@@ -1012,7 +1221,13 @@ def finalize_study(
         "targets": {},
     }
     export_chunk_payload(outdirs["base"] / "plot_input.npz", data, sample_summaries, weighting_info)
-    maybe_write_globalpart3_region_outputs_from_raw(data, study_payload, outdirs)
+    maybe_write_globalpart3_region_outputs_from_raw(
+        data,
+        study_payload,
+        outdirs,
+        plot_style,
+        _selected_contour_plot_defs(effective_args),
+    )
 
     for target in effective_args.targets:
         resolved_scores = resolve_scores(effective_args.scores, target, available_scores)
@@ -1052,6 +1267,7 @@ def finalize_plots_only(
     weighting_info: dict[str, Any],
 ) -> dict[str, Any]:
     outdirs = make_output_dirs(Path(effective_args.outdir))
+    plot_style = build_plot_style(effective_args)
     study_payload: dict[str, Any] = {
         "available_scores": get_available_scores(data),
         "sample_summaries": sample_summaries,
@@ -1060,7 +1276,13 @@ def finalize_plots_only(
         "targets": {},
         "mode": "plot_only",
     }
-    maybe_write_globalpart3_region_outputs_from_raw(data, study_payload, outdirs)
+    maybe_write_globalpart3_region_outputs_from_raw(
+        data,
+        study_payload,
+        outdirs,
+        plot_style,
+        _selected_contour_plot_defs(effective_args),
+    )
     render_plots(data, effective_args, study_payload, outdirs)
     write_json(outdirs["base"] / "plot_only_summary.json", study_payload)
     return study_payload
@@ -1074,6 +1296,7 @@ def finalize_histogram_study(
 ) -> dict[str, Any]:
     available_scores = list(histogram_payload["available_scores"])
     outdirs = make_output_dirs(Path(effective_args.outdir))
+    plot_style = build_plot_style(effective_args)
     study_payload: dict[str, Any] = {
         "payload_mode": HISTOGRAM_PAYLOAD_MODE,
         "available_scores": available_scores,
@@ -1083,7 +1306,13 @@ def finalize_histogram_study(
         "targets": {},
     }
     export_histogram_payload(outdirs["base"] / "plot_input.npz", histogram_payload, sample_summaries, weighting_info)
-    maybe_write_globalpart3_region_outputs_from_hist(histogram_payload, study_payload, outdirs)
+    maybe_write_globalpart3_region_outputs_from_hist(
+        histogram_payload,
+        study_payload,
+        outdirs,
+        plot_style,
+        _selected_contour_plot_defs(effective_args),
+    )
 
     hist_edges = np.asarray(histogram_payload["hist_edges"], dtype=np.float64)
     for target in effective_args.targets:
@@ -1119,6 +1348,7 @@ def finalize_histogram_plots_only(
     weighting_info: dict[str, Any],
 ) -> dict[str, Any]:
     outdirs = make_output_dirs(Path(effective_args.outdir))
+    plot_style = build_plot_style(effective_args)
     study_payload: dict[str, Any] = {
         "payload_mode": HISTOGRAM_PAYLOAD_MODE,
         "available_scores": list(histogram_payload["available_scores"]),
@@ -1128,7 +1358,13 @@ def finalize_histogram_plots_only(
         "targets": {},
         "mode": "plot_only",
     }
-    maybe_write_globalpart3_region_outputs_from_hist(histogram_payload, study_payload, outdirs)
+    maybe_write_globalpart3_region_outputs_from_hist(
+        histogram_payload,
+        study_payload,
+        outdirs,
+        plot_style,
+        _selected_contour_plot_defs(effective_args),
+    )
     render_histogram_plots(histogram_payload, effective_args, study_payload, outdirs)
     write_json(outdirs["base"] / "plot_only_summary.json", study_payload)
     return study_payload
@@ -1148,6 +1384,7 @@ def run_export_chunk(args: argparse.Namespace) -> dict[str, Any]:
             sample_summaries=sample_summaries,
             score_names=selected_scores,
             n_bins=effective_args.score_hist_bins,
+            contour_plot_defs=_selected_contour_plot_defs(effective_args),
         )
         exported_scores = export_histogram_payload(
             outpath=chunk_path,

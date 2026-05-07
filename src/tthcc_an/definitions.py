@@ -162,7 +162,7 @@ TARGET_DEFINITIONS = {
             "top",
             "other",
         ],
-        "default_scores": ["gpart_h2bb", "gpart_hbb_vs_hcc"],
+        "default_scores": ["gpart_h2bb", "gpart_xbb_vs_xcc", "gpart_hbb_vs_hcc"],
     },
     "higgs": {
         "title": r"$H\to bb / cc$",
@@ -182,6 +182,7 @@ TARGET_DEFINITIONS = {
 SCORE_LABELS = {
     "gpart_h2cc": r"gParT3 $H\to cc$ score",
     "gpart_h2bb": r"gParT3 $H\to bb$ score",
+    "gpart_xbb_vs_xcc": r"gParT3 $Xbb$ vs $Xcc$",
     "gpart_hbb_vs_hcc": r"gParT3 $H\to bb$ vs $H\to cc$",
     "gpart_higgs_vs_qcd": r"gParT3 Higgs vs QCD",
     "pnet_hcc": r"ParticleNetWithMass $Hcc$ vs QCD",
@@ -192,18 +193,187 @@ SCORE_LABELS = {
 SCORE_INPUT_FIELDS = {
     "gpart_h2cc": {"globalParT3_Xcc", "globalParT3_QCD"},
     "gpart_h2bb": {"globalParT3_Xbb", "globalParT3_QCD"},
-    "gpart_hbb_vs_hcc": {"globalParT3_Xbb", "globalParT3_Xcc"},
+    "gpart_xbb_vs_xcc": {"globalParT3_Xbb", "globalParT3_Xcc"},
+    "gpart_hbb_vs_hcc": {"globalParT3_Xbb", "globalParT3_Xcc", "globalParT3_QCD"},
     "gpart_higgs_vs_qcd": {"globalParT3_Xbb", "globalParT3_Xcc", "globalParT3_QCD"},
     "pnet_hcc": {"particleNetWithMass_HccvsQCD"},
     "pnet_xcc": {"particleNet_XccVsQCD"},
     "pnetlegacy_xcc": {"particleNetLegacy_Xcc"},
 }
 
-GLOBALPART3_CONTOUR_PLOT = {
-    "key": "gpart_higgs_vs_qcd__vs__gpart_hbb_vs_hcc",
-    "x_score": "gpart_higgs_vs_qcd",
-    "y_score": "gpart_hbb_vs_hcc",
-    "filename_stem": "gpart_higgs_vs_qcd__vs__gpart_hbb_vs_hcc__contours",
+_DEFAULT_CONTOUR_REGION_DEFINITIONS = {
+    "qcd_others": {
+        "label": "QCD&Others region",
+        "kind": "complement",
+        "annotation": {"x": 0.15, "y": 0.80},
+    },
+    "hcc": {
+        "label": "Hcc region",
+        "kind": "rectangle",
+        "x_min_exclusive": 0.45,
+        "y_min_exclusive": 0.0,
+        "y_max_inclusive": 0.7,
+        "annotation": {"x": 0.55, "y": 0.65},
+    },
+    "hbb": {
+        "label": "Hbb region",
+        "kind": "rectangle",
+        "x_min_exclusive": 0.75,
+        "y_min_exclusive": 0.7,
+        "y_max_inclusive": 1.0,
+        "annotation": {"x": 0.78, "y": 0.88},
+    },
+}
+
+_DEFAULT_CONTOUR_BOUNDARY_SEGMENTS = [
+    {"x": [0.45, 0.45], "y": [0.0, 0.7]},
+    {"x": [0.45, 1.0], "y": [0.7, 0.7]},
+    {"x": [0.75, 0.75], "y": [0.7, 1.0]},
+]
+
+_HBB_VS_HCC_CONTOUR_REGION_DEFINITIONS = {
+    "qcd_others": {
+        "label": "QCD&Others region",
+        "kind": "complement",
+        "annotation": {"x": 0.15, "y": 0.80},
+    },
+    "hcc": {
+        "label": "Hcc region",
+        "kind": "rectangle",
+        "x_min_exclusive": 0.45,
+        "y_min_exclusive": 0.0,
+        "y_max_inclusive": 0.55,
+        "annotation": {"x": 0.53, "y": 0.50},
+    },
+    "hbb": {
+        "label": "Hbb region",
+        "kind": "rectangle",
+        "x_min_exclusive": 0.75,
+        "y_min_exclusive": 0.55,
+        "y_max_inclusive": 1.0,
+        "annotation": {"x": 0.77, "y": 0.82},
+    },
+}
+
+_HBB_VS_HCC_CONTOUR_BOUNDARY_SEGMENTS = [
+    {"x": [0.45, 0.45], "y": [0.0, 0.55]},
+    {"x": [0.45, 1.0], "y": [0.55, 0.55]},
+    {"x": [0.75, 0.75], "y": [0.55, 1.0]},
+]
+
+DEFAULT_XBB_VS_XCC_REGION_PRESET = "loose"
+
+XBB_VS_XCC_REGION_PRESETS = {
+    "loose": {
+        "label": "loose",
+        "description": "QCD mistag eff = 1%",
+        "hcc_x_cut": 0.7333,
+        "hbb_x_cut": 0.9133,
+        "fixed_x_cut": 0.9133,
+    },
+    "tight": {
+        "label": "tight",
+        "description": "QCD mistag eff = 0.1% / 0.5%",
+        "hcc_x_cut": 0.9467,
+        "hbb_x_cut": 0.9467,
+        "fixed_x_cut": 0.9467,
+    },
+}
+
+
+def _build_xbb_vs_xcc_contour_region_definitions(preset: str) -> dict[str, dict[str, object]]:
+    preset_key = str(preset).strip().lower()
+    if preset_key not in XBB_VS_XCC_REGION_PRESETS:
+        raise ValueError(
+            "Unknown xbb-vs-xcc region preset: "
+            f"{preset}. Available presets: {', '.join(sorted(XBB_VS_XCC_REGION_PRESETS))}"
+        )
+    preset_payload = XBB_VS_XCC_REGION_PRESETS[preset_key]
+    hcc_x_cut = float(preset_payload["hcc_x_cut"])
+    hbb_x_cut = float(preset_payload["hbb_x_cut"])
+    annotation_x = 0.945
+    return {
+        "qcd_others": {
+            "label": "QCD&Others region",
+            "kind": "complement",
+            "annotation": {"x": 0.16, "y": 0.80},
+        },
+        "hcc": {
+            "label": "Hcc region",
+            "kind": "rectangle",
+            "x_min_exclusive": hcc_x_cut,
+            "y_min_exclusive": 0.0,
+            "y_max_inclusive": 0.85,
+            "annotation": {"x": annotation_x, "y": 0.68},
+        },
+        "hbb": {
+            "label": "Hbb region",
+            "kind": "rectangle",
+            "x_min_exclusive": hbb_x_cut,
+            "y_min_exclusive": 0.85,
+            "y_max_inclusive": 1.0,
+            "annotation": {"x": annotation_x, "y": 0.95},
+        },
+    }
+
+
+def _build_xbb_vs_xcc_contour_boundary_segments(preset: str) -> list[dict[str, list[float]]]:
+    preset_key = str(preset).strip().lower()
+    if preset_key not in XBB_VS_XCC_REGION_PRESETS:
+        raise ValueError(
+            "Unknown xbb-vs-xcc region preset: "
+            f"{preset}. Available presets: {', '.join(sorted(XBB_VS_XCC_REGION_PRESETS))}"
+        )
+    preset_payload = XBB_VS_XCC_REGION_PRESETS[preset_key]
+    hcc_x_cut = float(preset_payload["hcc_x_cut"])
+    hbb_x_cut = float(preset_payload["hbb_x_cut"])
+    segments = [
+        {"x": [hcc_x_cut, hcc_x_cut], "y": [0.0, 0.85]},
+        {"x": [hcc_x_cut, 1.0], "y": [0.85, 0.85]},
+    ]
+    segments.append({"x": [hbb_x_cut, hbb_x_cut], "y": [0.85, 1.0]})
+    return segments
+
+def build_globalpart3_contour_plots(
+    *,
+    xbb_vs_xcc_region_preset: str = DEFAULT_XBB_VS_XCC_REGION_PRESET,
+) -> list[dict[str, object]]:
+    preset_key = str(xbb_vs_xcc_region_preset).strip().lower()
+    if preset_key not in XBB_VS_XCC_REGION_PRESETS:
+        raise ValueError(
+            "Unknown xbb-vs-xcc region preset: "
+            f"{xbb_vs_xcc_region_preset}. Available presets: {', '.join(sorted(XBB_VS_XCC_REGION_PRESETS))}"
+        )
+    preset_payload = XBB_VS_XCC_REGION_PRESETS[preset_key]
+    return [
+        {
+            "key": "gpart_higgs_vs_qcd__vs__gpart_hbb_vs_hcc",
+            "x_score": "gpart_higgs_vs_qcd",
+            "y_score": "gpart_hbb_vs_hcc",
+            "filename_stem": "gpart_higgs_vs_qcd__vs__gpart_hbb_vs_hcc__contours",
+            "region_definitions": _HBB_VS_HCC_CONTOUR_REGION_DEFINITIONS,
+            "boundary_segments": _HBB_VS_HCC_CONTOUR_BOUNDARY_SEGMENTS,
+            "region_preset": "default",
+        },
+        {
+            "key": "gpart_higgs_vs_qcd__vs__gpart_xbb_vs_xcc",
+            "x_score": "gpart_higgs_vs_qcd",
+            "y_score": "gpart_xbb_vs_xcc",
+            "filename_stem": "gpart_higgs_vs_qcd__vs__gpart_xbb_vs_xcc__contours",
+            "region_definitions": _build_xbb_vs_xcc_contour_region_definitions(preset_key),
+            "boundary_segments": _build_xbb_vs_xcc_contour_boundary_segments(preset_key),
+            "fixed_x_cut": float(preset_payload["fixed_x_cut"]),
+            "region_preset": preset_key,
+            "region_preset_label": str(preset_payload["label"]),
+            "region_preset_description": str(preset_payload["description"]),
+        },
+    ]
+
+
+GLOBALPART3_CONTOUR_PLOTS = build_globalpart3_contour_plots()
+
+GLOBALPART3_CONTOUR_PLOT_BY_KEY = {
+    plot_def["key"]: plot_def for plot_def in GLOBALPART3_CONTOUR_PLOTS
 }
 
 GLOBALPART3_CONTOUR_HIST_BINS = 150
@@ -221,6 +391,14 @@ GLOBALPART3_CONTOUR_ENCLOSED_FRACTIONS = [
     0.8,
     0.9,
 ]
+
+GLOBALPART3_FIXED_OTHER_EFF_TARGETS = [
+    0.01,
+    0.005,
+    0.001,
+]
+
+GLOBALPART3_FIXED_X_CUT = 0.9467
 
 GLOBALPART3_CONTOUR_CATEGORIES = [
     {

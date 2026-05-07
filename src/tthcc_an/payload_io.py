@@ -11,7 +11,8 @@ from tthcc_an.definitions import (
     GLOBALPART3_CONTOUR_CATEGORIES,
     GLOBALPART3_CONTOUR_CLIP_EPS,
     GLOBALPART3_CONTOUR_HIST_BINS,
-    GLOBALPART3_CONTOUR_PLOT,
+    GLOBALPART3_CONTOUR_PLOT_BY_KEY,
+    GLOBALPART3_CONTOUR_PLOTS,
     SCORE_LABELS,
     TRUTH_LABEL_ORDER,
     build_process_entries_from_pairs,
@@ -115,6 +116,7 @@ def _contour_histogram_from_arrays(
     truth_codes: np.ndarray,
     weights: np.ndarray,
     n_bins: int,
+    plot_def: dict[str, Any],
 ) -> dict[str, Any]:
     x_edges = score_hist_edges(n_bins)
     y_edges = score_hist_edges(n_bins)
@@ -122,9 +124,16 @@ def _contour_histogram_from_arrays(
     valid = np.isfinite(x_scores) & np.isfinite(y_scores) & np.isfinite(weights) & (weights > 0)
     if not np.any(valid):
         return {
-            "x_score": GLOBALPART3_CONTOUR_PLOT["x_score"],
-            "y_score": GLOBALPART3_CONTOUR_PLOT["y_score"],
-            "filename_stem": GLOBALPART3_CONTOUR_PLOT["filename_stem"],
+            "key": plot_def["key"],
+            "x_score": plot_def["x_score"],
+            "y_score": plot_def["y_score"],
+            "filename_stem": plot_def["filename_stem"],
+            "fixed_x_cut": plot_def.get("fixed_x_cut"),
+            "region_preset": plot_def.get("region_preset"),
+            "region_preset_label": plot_def.get("region_preset_label"),
+            "region_preset_description": plot_def.get("region_preset_description"),
+            "region_definitions": plot_def["region_definitions"],
+            "boundary_segments": plot_def["boundary_segments"],
             "categories": list(GLOBALPART3_CONTOUR_CATEGORIES),
             "x_edges": x_edges,
             "y_edges": y_edges,
@@ -150,9 +159,16 @@ def _contour_histogram_from_arrays(
         weight_category[index] = np.asarray(hist2d, dtype=np.float64)
 
     return {
-        "x_score": GLOBALPART3_CONTOUR_PLOT["x_score"],
-        "y_score": GLOBALPART3_CONTOUR_PLOT["y_score"],
-        "filename_stem": GLOBALPART3_CONTOUR_PLOT["filename_stem"],
+        "key": plot_def["key"],
+        "x_score": plot_def["x_score"],
+        "y_score": plot_def["y_score"],
+        "filename_stem": plot_def["filename_stem"],
+        "fixed_x_cut": plot_def.get("fixed_x_cut"),
+        "region_preset": plot_def.get("region_preset"),
+        "region_preset_label": plot_def.get("region_preset_label"),
+        "region_preset_description": plot_def.get("region_preset_description"),
+        "region_definitions": plot_def["region_definitions"],
+        "boundary_segments": plot_def["boundary_segments"],
         "categories": list(GLOBALPART3_CONTOUR_CATEGORIES),
         "x_edges": x_edges,
         "y_edges": y_edges,
@@ -165,6 +181,7 @@ def build_histogram_payload_from_raw_data(
     sample_summaries: list[dict[str, Any]],
     score_names: list[str],
     n_bins: int,
+    contour_plot_defs: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     process_entries = build_process_entries_from_summaries(sample_summaries)
     n_processes = len(process_entries)
@@ -181,16 +198,19 @@ def build_histogram_payload_from_raw_data(
             n_bins=n_bins,
             n_processes=n_processes,
         )
-    contour_x_score = GLOBALPART3_CONTOUR_PLOT["x_score"]
-    contour_y_score = GLOBALPART3_CONTOUR_PLOT["y_score"]
-    if contour_x_score in data and contour_y_score in data:
-        contour_payloads[GLOBALPART3_CONTOUR_PLOT["key"]] = _contour_histogram_from_arrays(
-            x_scores=np.asarray(data[contour_x_score], dtype=np.float64),
-            y_scores=np.asarray(data[contour_y_score], dtype=np.float64),
-            truth_codes=np.asarray(data["truth_code"], dtype=np.int8),
-            weights=np.asarray(data["weight"], dtype=np.float64),
-            n_bins=GLOBALPART3_CONTOUR_HIST_BINS,
-        )
+    selected_contour_plot_defs = list(contour_plot_defs or GLOBALPART3_CONTOUR_PLOTS)
+    for plot_def in selected_contour_plot_defs:
+        contour_x_score = str(plot_def["x_score"])
+        contour_y_score = str(plot_def["y_score"])
+        if contour_x_score in data and contour_y_score in data:
+            contour_payloads[str(plot_def["key"])] = _contour_histogram_from_arrays(
+                x_scores=np.asarray(data[contour_x_score], dtype=np.float64),
+                y_scores=np.asarray(data[contour_y_score], dtype=np.float64),
+                truth_codes=np.asarray(data["truth_code"], dtype=np.int8),
+                weights=np.asarray(data["weight"], dtype=np.float64),
+                n_bins=GLOBALPART3_CONTOUR_HIST_BINS,
+                plot_def=plot_def,
+            )
     return {
         "payload_mode": HISTOGRAM_PAYLOAD_MODE,
         "hist_edges": score_hist_edges(n_bins),
@@ -222,9 +242,16 @@ def export_histogram_payload(
             dtype=np.float64,
         )
         contour_plot_defs[plot_key] = {
+            "key": contour_payload["key"],
             "x_score": contour_payload["x_score"],
             "y_score": contour_payload["y_score"],
             "filename_stem": contour_payload["filename_stem"],
+            "fixed_x_cut": contour_payload.get("fixed_x_cut"),
+            "region_preset": contour_payload.get("region_preset"),
+            "region_preset_label": contour_payload.get("region_preset_label"),
+            "region_preset_description": contour_payload.get("region_preset_description"),
+            "region_definitions": contour_payload["region_definitions"],
+            "boundary_segments": contour_payload["boundary_segments"],
             "categories": contour_payload["categories"],
         }
 
@@ -487,6 +514,33 @@ def load_merged_histogram_payloads(
                 plot_def = contour_plot_defs.get(plot_key)
                 if plot_def is None:
                     raise ValueError(f"Missing contour plot definition for {plot_key} in {chunk_path}")
+                canonical_plot_def = dict(GLOBALPART3_CONTOUR_PLOT_BY_KEY.get(plot_key, {}))
+                if canonical_plot_def:
+                    canonical_plot_def["key"] = plot_def.get("key", canonical_plot_def.get("key", plot_key))
+                    canonical_plot_def["x_score"] = plot_def.get("x_score", canonical_plot_def["x_score"])
+                    canonical_plot_def["y_score"] = plot_def.get("y_score", canonical_plot_def["y_score"])
+                    canonical_plot_def["filename_stem"] = plot_def.get(
+                        "filename_stem",
+                        canonical_plot_def["filename_stem"],
+                    )
+                    canonical_plot_def["fixed_x_cut"] = plot_def.get(
+                        "fixed_x_cut",
+                        canonical_plot_def.get("fixed_x_cut"),
+                    )
+                    canonical_plot_def["region_preset"] = plot_def.get(
+                        "region_preset",
+                        canonical_plot_def.get("region_preset"),
+                    )
+                    canonical_plot_def["region_preset_label"] = plot_def.get(
+                        "region_preset_label",
+                        canonical_plot_def.get("region_preset_label"),
+                    )
+                    canonical_plot_def["region_preset_description"] = plot_def.get(
+                        "region_preset_description",
+                        canonical_plot_def.get("region_preset_description"),
+                    )
+                else:
+                    canonical_plot_def = dict(plot_def)
                 x_edges = np.asarray(payload[contour_payload_array_key(plot_key, "x_edges")], dtype=np.float64)
                 y_edges = np.asarray(payload[contour_payload_array_key(plot_key, "y_edges")], dtype=np.float64)
                 weight_category = np.asarray(
@@ -495,9 +549,16 @@ def load_merged_histogram_payloads(
                 )
                 if plot_key not in contour_payloads:
                     contour_payloads[plot_key] = {
-                        "x_score": plot_def["x_score"],
-                        "y_score": plot_def["y_score"],
-                        "filename_stem": plot_def["filename_stem"],
+                        "key": canonical_plot_def.get("key", plot_key),
+                        "x_score": canonical_plot_def["x_score"],
+                        "y_score": canonical_plot_def["y_score"],
+                        "filename_stem": canonical_plot_def["filename_stem"],
+                        "fixed_x_cut": canonical_plot_def.get("fixed_x_cut"),
+                        "region_preset": canonical_plot_def.get("region_preset"),
+                        "region_preset_label": canonical_plot_def.get("region_preset_label"),
+                        "region_preset_description": canonical_plot_def.get("region_preset_description"),
+                        "region_definitions": canonical_plot_def.get("region_definitions", {}),
+                        "boundary_segments": canonical_plot_def.get("boundary_segments", []),
                         "categories": list(plot_def["categories"]),
                         "x_edges": x_edges,
                         "y_edges": y_edges,

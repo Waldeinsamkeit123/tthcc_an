@@ -189,6 +189,13 @@ At the moment the shipped 2024 config defaults to:
 - `targets = ["hcc", "hbb", "higgs"]`
 - `scores = ["auto"]`
 - `candidate_strategy = "mass_window_all_jets"`
+- `xbb_vs_xcc_region_preset = "loose"`
+
+For the `gpart_higgs_vs_qcd` vs `gpart_xbb_vs_xcc` contour plot, two region
+presets are available:
+
+- `loose`: `Hcc x > 0.7333`, `Hbb x > 0.9133`, corresponding to the `QCD` mistag reference at `1%`
+- `tight`: `Hcc x > 0.9467`, `Hbb x > 0.9467`, corresponding to the `QCD` mistag reference at `0.1% / 0.5%`
 
 ## Typical Commands
 
@@ -225,6 +232,17 @@ python scripts/run_boosted_higgs_tagger_study.py \
   --msd-window-low 100 \
   --msd-window-high 150 \
   --outdir outputs/boosted_higgs_tagger_study_2024_msd
+```
+
+### Switch the `xbb` vs `xcc` contour region preset
+
+```bash
+python scripts/run_boosted_higgs_tagger_study.py \
+  --config config/samples_2024_add_nonttbarmatch_allmc.json \
+  --merge-chunks 'condor/<tag>/chunk_outputs/chunk_*.npz' \
+  --plot-only \
+  --xbb-vs-xcc-region-preset tight \
+  --outdir outputs/boosted_higgs_tagger_xbbxcc_tight
 ```
 
 ## Outputs
