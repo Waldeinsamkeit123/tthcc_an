@@ -1,0 +1,95 @@
+{
+  "samples_config": "samples_2024_0l_v1.json",
+  "study": {
+    "outdir": "outputs/event_bdt_ttHcc_0l_smoke",
+    "tree_name": "Events",
+    "base_selection": "(MET_pt >= 200.0) & (ncleanedjet >= 4) & (ntargetfatjet >= 1) & (TargetFatJet_pt >= 250.0) & (np.abs(TargetFatJet_eta) <= 2.4)",
+    "selection_branches": [
+      "MET_pt",
+      "ncleanedjet",
+      "ntargetfatjet",
+      "TargetFatJet_pt",
+      "TargetFatJet_eta"
+    ],
+    "features": [
+      "MET_pt",
+      "HT",
+      "CleanedHT",
+      "Cleaned_HTb",
+      "Cleaned_HTc",
+      "Cleaned_HTcb",
+      "nbtag",
+      "nctag",
+      "ncleanedjet",
+      "nfatjet",
+      "ntargetfatjet",
+      "TargetFatJet_pt",
+      "TargetFatJet_eta",
+      "TargetFatJet_mass",
+      "TargetFatJet_msoftdrop",
+      "TargetFatJet_HiggsVsQCD",
+      "TargetFatJet_BBvsCC",
+      "minDR_b",
+      "mass_minDR_b",
+      "maxMass_b",
+      "DR_Tarb1",
+      "DR_Tarb2",
+      "minDR_TarClean"
+    ],
+    "spectators": [
+      "event",
+      "run",
+      "luminosityBlock",
+      "genTtbarId",
+      "weight"
+    ],
+    "weight_branch": "weight",
+    "signal_processes": ["ttHcc", "ttHbb"],
+    "background_processes": ["ttbar", "ttbb", "ttv", "ttll", "single_top", "wjets", "zjets", "qcd"],
+    "eval_processes_extra": ["ttH_nonbb"],
+    "k_folds": 3,
+    "random_seed": 42,
+    "max_files_per_sample": 1,
+    "uproot_step_size": "200 MB",
+    "model_name": "xgb_ttHcc_0l_smoke",
+    "prepared_inputs": "prepared_inputs.npz",
+    "predictions": "predictions.npz",
+    "summary": "training_summary.json",
+    "feature_importance": "feature_importance.json",
+    "model_dir": "models",
+    "plot_dir": "plots",
+    "flatten_first_branches": [
+      "TargetFatJet_pt",
+      "TargetFatJet_eta",
+      "TargetFatJet_mass",
+      "TargetFatJet_msoftdrop",
+      "TargetFatJet_HiggsVsQCD",
+      "TargetFatJet_BBvsCC"
+    ]
+  },
+  "reweighting": {
+    "enabled": true,
+    "variables": [
+      {
+        "name": "TargetFatJet_pt",
+        "bins": [200, 250, 300, 350, 400, 450, 500, 600, 700, 800, 1000]
+      },
+      {
+        "name": "HT",
+        "bins": [400, 500, 600, 700, 800, 900, 1000, 1200, 1400, 1700, 2000, 2500]
+      }
+    ]
+  },
+  "xgboost": {
+    "tree_method": "hist",
+    "objective": "binary:logistic",
+    "eval_metric": ["auc", "logloss"],
+    "eta": 0.08,
+    "max_depth": 4,
+    "subsample": 0.8,
+    "colsample_bytree": 0.8,
+    "min_child_weight": 1.0,
+    "num_boost_round": 80,
+    "early_stopping_rounds": 10
+  }
+}

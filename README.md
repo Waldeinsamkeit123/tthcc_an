@@ -1,6 +1,7 @@
 # tthcc_an
 
-Analysis repository for the Run 3 boosted `ttHcc` / `ttHbb` study.
+Analysis repository for Run 3 boosted `ttHcc` / `ttHbb` studies, including
+AK8 boosted Higgs tagger studies and a prototype event-level BDT workflow.
 
 ## Overview
 
@@ -9,20 +10,40 @@ The original analysis framework is based on:
 
 - `pepper-tth`: https://gitlab.cern.ch/tthcc-run-3/pepper-tth.git
 
-The current focus of this repository is AK8 boosted Higgs tagger studies using
-Pepper-produced ROOT ntuples.
+The current focus of this repository is:
+
+- AK8 boosted Higgs tagger studies using Pepper-produced ROOT ntuples
+- a prototype 2024 `0L` event-level BDT workflow for `ttH`-enriched selection studies
 
 ## Repository Layout
 
 - `config/`: study configuration files
+  - `config/event_bdt/`: event-BDT sample and training configs
 - `scripts/`: runnable entrypoints and submission helpers
 - `src/`: core analysis code
+  - `src/tthcc_an/event_bdt/`: event-BDT prototype modules
 - `outputs/`: local study outputs
 - `condor/`: prepared HTCondor workflows and chunk outputs
 
-## Main Study Script
+## Main Entry Points
 
-The main script is:
+This repository currently has two main user-facing workflows:
+
+- boosted Higgs tagger studies:
+
+```bash
+python scripts/run_boosted_higgs_tagger_study.py
+```
+
+- event-level BDT prototype:
+
+```bash
+python scripts/run_event_bdt.py
+```
+
+## Boosted Higgs Tagger Study
+
+The boosted-study script is:
 
 ```bash
 python scripts/run_boosted_higgs_tagger_study.py
@@ -157,6 +178,9 @@ Available configs in this repository:
 
 - [config/samples.example.json](/eos/user/h/hanw/ttHcc/tthcc_an/config/samples.example.json)
 - [config/samples_2024_add_nonttbarmatch_allmc.json](/eos/user/h/hanw/ttHcc/tthcc_an/config/samples_2024_add_nonttbarmatch_allmc.json)
+- [config/event_bdt/samples_2024_0l_v1.json](/eos/user/h/hanw/ttHcc/tthcc_an/config/event_bdt/samples_2024_0l_v1.json)
+- [config/event_bdt/train_ttHcc_0l_baseline.json](/eos/user/h/hanw/ttHcc/tthcc_an/config/event_bdt/train_ttHcc_0l_baseline.json)
+- [config/event_bdt/train_ttHcc_0l_smoke.json](/eos/user/h/hanw/ttHcc/tthcc_an/config/event_bdt/train_ttHcc_0l_smoke.json)
 
 The 2024 config already contains:
 
@@ -196,6 +220,124 @@ presets are available:
 
 - `loose`: `Hcc x > 0.7333`, `Hbb x > 0.9133`, corresponding to the `QCD` mistag reference at `1%`
 - `tight`: `Hcc x > 0.9467`, `Hbb x > 0.9467`, corresponding to the `QCD` mistag reference at `0.1% / 0.5%`
+
+## 0L Event-BDT Prototype
+
+The repository also contains a prototype event-level BDT workflow for the 2024
+`0L` study:
+
+- sample config: [config/event_bdt/samples_2024_0l_v1.json](/eos/user/h/hanw/ttHcc/tthcc_an/config/event_bdt/samples_2024_0l_v1.json)
+- training config: [config/event_bdt/train_ttHcc_0l_baseline.json](/eos/user/h/hanw/ttHcc/tthcc_an/config/event_bdt/train_ttHcc_0l_baseline.json)
+- CLI: [scripts/run_event_bdt.py](/eos/user/h/hanw/ttHcc/tthcc_an/scripts/run_event_bdt.py:1)
+
+Current scope of the prototype:
+
+- channel: `0L`
+- training signal: `ttHcc + ttHbb`
+- training background: `ttbar`, `tt+bb`, `ttV`, `tt+ll`, `single top`, `W+jets`, `Z+jets`, `QCD`
+- eval-only sample: `TTH-HtoNon2B` is not used for training and is only shown in score-shape plots
+- data source: Pepper-produced `Events` trees under `/eos/user/h/hanw/ttHcc/pepper_data/2024/0L_v1_event`
+
+The baseline config currently uses a simple `0L` preselection:
+
+- `MET_pt >= 200`
+- `ncleanedjet >= 4`
+- `ntargetfatjet >= 1`
+- `TargetFatJet_pt >= 250`
+- `|TargetFatJet_eta| <= 2.4`
+
+The first-pass features mix event-level and target-fatjet observables such as:
+
+- `MET_pt`, `HT`, `CleanedHT`
+- `Cleaned_HTb`, `Cleaned_HTc`, `Cleaned_HTcb`
+- `nbtag`, `nctag`, `ncleanedjet`, `nfatjet`, `ntargetfatjet`
+- `TargetFatJet_pt`, `TargetFatJet_msoftdrop`, `TargetFatJet_HiggsVsQCD`, `TargetFatJet_BBvsCC`
+- `minDR_b`, `mass_minDR_b`, `maxMass_b`, `DR_Tarb1`, `DR_Tarb2`, `minDR_TarClean`
+
+The prototype reads `TargetFatJet_*` singleton-like branches by taking the
+first entry per event. For the current `0L` ntuples, `ntargetfatjet` is
+effectively `1` whenever the branch is present.
+
+The shipped 2024 sample config now points to:
+
+- `gen_sumw_file = /eos/user/h/hanw/ttHcc/pepper_data/2024/0L_v1/gen_sumws.json`
+- `xsec_file = /eos/user/h/hanw/ttHcc/tthcc_an/crosssections_run3.json`
+- `lumi_fb = 109.08`
+
+The training logic currently uses:
+
+- deterministic k-fold splitting from `run`, `luminosityBlock`, and `event`
+- optional background shape reweighting in configured variables
+- XGBoost binary classification
+- out-of-fold score storage for ROC evaluation
+
+### Event-BDT Commands
+
+Prepare a cached event table:
+
+```bash
+LCG108
+cd /eos/user/h/hanw/ttHcc/tthcc_an
+
+python scripts/run_event_bdt.py \
+  prepare \
+  --config config/event_bdt/train_ttHcc_0l_baseline.json
+```
+
+Quick smoke-test run for code and environment validation:
+
+```bash
+LCG108
+cd /eos/user/h/hanw/ttHcc/tthcc_an
+
+python scripts/run_event_bdt.py \
+  train \
+  --config config/event_bdt/train_ttHcc_0l_smoke.json
+
+python scripts/run_event_bdt.py \
+  evaluate \
+  --config config/event_bdt/train_ttHcc_0l_smoke.json
+```
+
+Train the prototype model:
+
+```bash
+LCG108
+cd /eos/user/h/hanw/ttHcc/tthcc_an
+
+python scripts/run_event_bdt.py \
+  train \
+  --config config/event_bdt/train_ttHcc_0l_baseline.json
+```
+
+Make ROC and score-shape plots from saved predictions:
+
+```bash
+LCG108
+cd /eos/user/h/hanw/ttHcc/tthcc_an
+
+python scripts/run_event_bdt.py \
+  evaluate \
+  --config config/event_bdt/train_ttHcc_0l_baseline.json
+```
+
+### Event-BDT Outputs
+
+For a standard event-BDT run, the output directory contains:
+
+- `prepared_inputs.npz`
+- `predictions.npz`
+- `training_summary.json`
+- `feature_importance.json`
+- `models/*.json`
+- `plots/roc_oof.png`
+- `plots/score_signal_vs_background.png`
+- `plots/score_by_process.png`
+- `plots/score_tth_family.png`
+
+The event-BDT prototype is currently intended for local iteration and small
+design studies. It does not yet have an `apply` mode for rewriting ROOT files
+or a dedicated Condor submission helper.
 
 ## Typical Commands
 
@@ -548,5 +690,11 @@ alias LCG108='source /cvmfs/sft.cern.ch/lcg/views/LCG_108/x86_64-el9-gcc15-opt/s
 
 then just run `LCG108` before launching the script.
 
-The minimal Python dependencies are listed in `requirements.txt` as a fallback
-reference.
+For the boosted-study workflow, the minimal fallback Python dependencies are
+listed in `requirements.txt`.
+
+For the event-BDT prototype, the recommended environment is still `LCG108`,
+because it provides the extra ML dependencies that the prototype expects:
+
+- `xgboost`
+- `scikit-learn`
