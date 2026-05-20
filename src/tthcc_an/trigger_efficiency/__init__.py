@@ -1,0 +1,2 @@
+"""Signal trigger-efficiency workflow."""
+

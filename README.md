@@ -41,6 +41,12 @@ python scripts/run_boosted_higgs_tagger_study.py
 python scripts/run_event_bdt.py
 ```
 
+- signal trigger-efficiency studies:
+
+```bash
+python scripts/run_trigger_efficiency.py
+```
+
 ## Boosted Higgs Tagger Study
 
 The boosted-study script is:
@@ -698,3 +704,64 @@ because it provides the extra ML dependencies that the prototype expects:
 
 - `xgboost`
 - `scikit-learn`
+
+## Signal Trigger-Efficiency Study
+
+The trigger-efficiency workflow studies AK8/PFHT HLT paths on signal-only
+Pepper ntuples where the baseline, mass-window, and fatjet-tagging selections
+have already been applied upstream.
+
+Run it with:
+
+```bash
+LCG108
+cd /eos/user/h/hanw/ttHcc/tthcc_an
+
+python scripts/run_trigger_efficiency.py \
+  --config config/trigger_efficiency/signal_2024_hlt_v1.json
+```
+
+The default config uses only:
+
+- `ttHbb`: `/eos/user/h/hanw/ttHcc/pepper_data/2024/HLT_v1_events/TTH-Hto2B_Par-M-125_TuneCP5_13p6TeV_powheg-pythia8`
+- `ttHcc`: `/eos/user/h/hanw/ttHcc/pepper_data/2024/HLT_v1_events/TTH-Hto2C_Par-M-125_TuneCP5_13p6TeV_powheg-pythia8`
+
+The denominator is the weighted signal yield in each x-axis bin after the
+upstream Pepper baseline. The numerator is the same yield with the given HLT
+path passing. The analysis weight is:
+
+```text
+sample_norm = lumi_fb * xsec / gen_sumw
+analysis_weight = sample_norm * abs(weight)
+```
+
+The workflow produces efficiency curves versus:
+
+- `TargetFatJet_pt`
+- `genhiggs_pt`
+
+Each plot overlays exactly two curves: `ttHbb` and `ttHcc`. The configured HLT
+paths are grouped into:
+
+- `ak8_inclusive`
+- `ak8_softdrop`
+- `ak8_pnetbb`
+- `pfht_multijet_pnet`
+- `or_summary`
+
+Outputs are written under `outputs/trigger_efficiency_signal_2024_hlt_v1/`:
+
+- `tables/trigger_efficiencies.csv`
+- `summary.json`
+- `plots/eff_vs_TargetFatJet_pt__*.png`
+- `plots/eff_vs_genhiggs_pt__*.png`
+
+For a quick validation run:
+
+```bash
+python scripts/run_trigger_efficiency.py \
+  --config config/trigger_efficiency/signal_2024_hlt_v1.json \
+  --max-files-per-sample 1 \
+  --outdir outputs/trigger_efficiency_signal_2024_hlt_v1_smoke
+```
+
