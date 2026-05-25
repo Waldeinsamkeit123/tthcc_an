@@ -72,7 +72,7 @@ Main features:
 - studies working points on mass-window-selected jets by default
 - computes weighted working points at chosen signal efficiencies
 - writes tables, text summaries, JSON summaries, ROC curves, and score plots
-- writes a 2D cumulative contour plot in the `gParT3 Higgs vs QCD` vs `gParT3 Hbb vs Hcc` plane
+- writes 2D cumulative contour studies in the `gParT3 Higgs vs QCD` vs `gParT3 Hbb vs Hcc` and `gParT3 Higgs vs QCD` vs `gParT3 Xbb vs Xcc` planes
 - stores a reusable `plot_input.npz` cache for later plot-only redraws
 - uses histogram chunk payloads by default for low-memory HTCondor merges
 - uses `mplhep` with CMS style for figures
@@ -81,6 +81,7 @@ Currently supported scores:
 
 - `gpart_h2cc = Xcc / (Xcc + QCD)`
 - `gpart_h2bb = Xbb / (Xbb + QCD)`
+- `gpart_xbb_vs_xcc = Xbb / (Xbb + Xcc)`
 - `gpart_hbb_vs_hcc = Xbb / (Xbb + Xcc)`
 - `gpart_higgs_vs_qcd = (Xbb + Xcc) / (Xbb + Xcc + QCD)`
 - `pnet_hcc = particleNetWithMass_HccvsQCD`
@@ -90,7 +91,7 @@ Currently supported scores:
 Default `auto` score selection is target-dependent:
 
 - `hcc -> gpart_h2cc`
-- `hbb -> gpart_h2bb, gpart_hbb_vs_hcc`
+- `hbb -> gpart_h2bb, gpart_xbb_vs_xcc, gpart_hbb_vs_hcc`
 - `higgs -> gpart_higgs_vs_qcd`
 
 ## Weighting
@@ -150,17 +151,18 @@ For `target = higgs`:
 - signal = `hbb_pure + hcc_pure`
 - background = `hbb_contaminated + hbb_partial + hcc_contaminated + hcc_partial + top + other`
 
-## 2D Contour Plot
+## 2D Contour Plots
 
-The study also writes a dedicated 2D contour plot:
+The study writes two dedicated 2D contour plots:
 
 - `plots/gpart_higgs_vs_qcd__vs__gpart_hbb_vs_hcc__contours.png`
+- `plots/gpart_higgs_vs_qcd__vs__gpart_xbb_vs_xcc__contours.png`
 
-This plot is not tied to one study target. It always shows the weighted fat-jet
-distributions in the score plane:
+These plots are not tied to one study target. They show the weighted fat-jet
+distributions in two score planes:
 
-- x-axis: `gpart_higgs_vs_qcd = (Xbb + Xcc) / (Xbb + Xcc + QCD)`
-- y-axis: `gpart_hbb_vs_hcc = Xbb / (Xbb + Xcc)`
+- `gpart_higgs_vs_qcd` vs `gpart_hbb_vs_hcc`
+- `gpart_higgs_vs_qcd` vs `gpart_xbb_vs_xcc`
 
 The three plotted truth populations are:
 
@@ -176,7 +178,11 @@ The contours are cumulative enclosed-fraction contours:
 - contour thresholds correspond to enclosed fractions `10%` through `90%`
 - the plot uses filled `contourf` bands plus overlaid contour lines
 
-The contour plot currently writes a `.png` output only.
+For each contour study, the code also writes summary text/JSON products:
+
+- `summaries/...__region_efficiencies.txt`
+- `summaries/...__fixed_other_efficiency_scan.txt`
+- `summaries/...__fixed_x_ycut_scan.txt`
 
 ## Config Files
 
@@ -226,6 +232,58 @@ presets are available:
 
 - `loose`: `Hcc x > 0.7333`, `Hbb x > 0.9133`, corresponding to the `QCD` mistag reference at `1%`
 - `tight`: `Hcc x > 0.9467`, `Hbb x > 0.9467`, corresponding to the `QCD` mistag reference at `0.1% / 0.5%`
+
+The shipped 2024 config currently points to:
+
+- event ntuples under `/eos/user/h/hanw/ttHcc/pepper_data/2024/add_nonttbarmatch_event`
+- normalization metadata in `/eos/user/h/hanw/ttHcc/pepper_data/2024/add_nonttbarmatch/gen_sumws.json`
+
+If you update the ROOT ntuples or `gen_sumws.json`, rerun the full study or a
+chunked Condor workflow. `--plot-only` only redraws from an existing
+`plot_input.npz` cache and does not pick up changed inputs.
+
+## Common 2024 Commands
+
+Quick smoke test after updating ntuples or `gen_sumws.json`:
+
+```bash
+source /cvmfs/sft.cern.ch/lcg/views/LCG_108/x86_64-el9-gcc15-opt/setup.sh
+cd /eos/user/h/hanw/ttHcc/tthcc_an
+
+python scripts/run_boosted_higgs_tagger_study.py \
+  --config config/samples_2024_add_nonttbarmatch_allmc.json \
+  --max-files-per-sample 1 \
+  --xbb-vs-xcc-region-preset tight \
+  --outdir outputs/boosted_higgs_tagger_study_2024_smoke_tight
+```
+
+Full local rerun for the `QCD mistag eff = 0.1% / 0.5%` `xbb-vs-xcc` study:
+
+```bash
+source /cvmfs/sft.cern.ch/lcg/views/LCG_108/x86_64-el9-gcc15-opt/setup.sh
+cd /eos/user/h/hanw/ttHcc/tthcc_an
+
+python scripts/run_boosted_higgs_tagger_study.py \
+  --config config/samples_2024_add_nonttbarmatch_allmc.json \
+  --xbb-vs-xcc-region-preset tight \
+  --outdir outputs/boosted_higgs_tagger_study_2024_tight
+```
+
+Recommended chunked Condor rerun for the same study:
+
+```bash
+source /cvmfs/sft.cern.ch/lcg/views/LCG_108/x86_64-el9-gcc15-opt/setup.sh
+cd /eos/user/h/hanw/ttHcc/tthcc_an
+
+python scripts/submit_boosted_higgs_tagger_condor.py \
+  --config config/samples_2024_add_nonttbarmatch_allmc.json \
+  --workflow-mode chunked \
+  --files-per-chunk 20 \
+  --condor-dir condor/boosted_higgs_tagger_2024_tight \
+  --outdir outputs/boosted_higgs_tagger_study_2024_tight \
+  --submit \
+  -- --xbb-vs-xcc-region-preset tight
+```
 
 ## 0L Event-BDT Prototype
 
@@ -327,9 +385,33 @@ python scripts/run_event_bdt.py \
   --config config/event_bdt/train_ttHcc_0l_baseline.json
 ```
 
+Apply the trained models and write scored ROOT files:
+
+```bash
+LCG108
+cd /eos/user/h/hanw/ttHcc/tthcc_an
+
+python scripts/run_event_bdt.py \
+  predict \
+  --config config/event_bdt/train_ttHcc_0l_baseline.json
+```
+
+Write both the mean-model score and the fold-routed score with custom branch names:
+
+```bash
+LCG108
+cd /eos/user/h/hanw/ttHcc/tthcc_an
+
+python scripts/run_event_bdt.py \
+  predict \
+  --config config/event_bdt/train_ttHcc_0l_baseline.json \
+  --prediction-mode both \
+  --score-branch event_bdt_score
+```
+
 ### Event-BDT Outputs
 
-For a standard event-BDT run, the output directory contains:
+For a standard event-BDT training run, the output directory contains:
 
 - `prepared_inputs.npz`
 - `predictions.npz`
@@ -341,9 +423,32 @@ For a standard event-BDT run, the output directory contains:
 - `plots/score_by_process.png`
 - `plots/score_tth_family.png`
 
+When `predict` is run, it additionally writes:
+
+- `scored_root/<sample>/<input-file>.root`
+- `scored_root/prediction_summary.json`
+
+The `predict` step is separate from `train` and `evaluate`:
+
+- `train` only prepares inputs, trains models, and writes summaries/plots
+- `evaluate` only redraws plots from saved predictions
+- `predict` is the only mode that rewrites ROOT files
+
+Each scored ROOT file keeps the full original `Events` tree and appends one or
+more BDT score branches:
+
+- default: `bdt_score`
+- `--prediction-mode both`: `bdt_score_mean` and `bdt_score_fold_routed`
+- `--score-branch <name>` changes the output branch prefix
+
+By default, every event is preserved in the output tree, but only events that
+pass the configured `base_selection` receive a finite score. Other events keep
+`NaN` in the added score branch. Use `--score-all-events` if you want to score
+all events.
+
 The event-BDT prototype is currently intended for local iteration and small
-design studies. It does not yet have an `apply` mode for rewriting ROOT files
-or a dedicated Condor submission helper.
+design studies. It now has a local `predict` mode for rewriting ROOT files, but
+it still does not have a dedicated Condor submission helper.
 
 ## Typical Commands
 

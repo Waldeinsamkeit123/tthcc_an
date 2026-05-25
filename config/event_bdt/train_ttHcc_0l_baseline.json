@@ -3,35 +3,18 @@
   "study": {
     "outdir": "outputs/event_bdt_ttHcc_0l_baseline",
     "tree_name": "Events",
-    "base_selection": "(MET_pt >= 200.0) & (ncleanedjet >= 4) & (ntargetfatjet >= 1) & (TargetFatJet_pt >= 250.0) & (np.abs(TargetFatJet_eta) <= 2.4)",
+    "base_selection": "(ntargetfatjet >= 1)",
     "selection_branches": [
-      "MET_pt",
-      "ncleanedjet",
-      "ntargetfatjet",
-      "TargetFatJet_pt",
-      "TargetFatJet_eta"
+      "ntargetfatjet"
     ],
     "features": [
       "MET_pt",
       "HT",
       "CleanedHT",
-      "Cleaned_HTb",
-      "Cleaned_HTc",
-      "Cleaned_HTcb",
-      "nbtag",
-      "nctag",
       "ncleanedjet",
-      "nfatjet",
-      "ntargetfatjet",
+      "CleanedJet_pt",
       "TargetFatJet_pt",
-      "TargetFatJet_eta",
-      "TargetFatJet_mass",
-      "TargetFatJet_msoftdrop",
-      "TargetFatJet_HiggsVsQCD",
-      "TargetFatJet_BBvsCC",
       "minDR_b",
-      "mass_minDR_b",
-      "maxMass_b",
       "DR_Tarb1",
       "DR_Tarb2",
       "minDR_TarClean"
@@ -47,7 +30,7 @@
     "signal_processes": ["ttHcc", "ttHbb"],
     "background_processes": ["ttbar", "ttbb", "ttv", "ttll", "single_top", "wjets", "zjets", "qcd"],
     "eval_processes_extra": ["ttH_nonbb"],
-    "k_folds": 5,
+    "k_folds": 10,
     "random_seed": 42,
     "uproot_step_size": "200 MB",
     "model_name": "xgb_ttHcc_0l_baseline",
@@ -76,6 +59,10 @@
       {
         "name": "HT",
         "bins": [400, 500, 600, 700, 800, 900, 1000, 1200, 1400, 1700, 2000, 2500]
+      },
+      {
+        "name": "CleanedJet_pt",
+        "bins": [30, 50, 70, 100, 150, 200, 300, 400, 500, 700, 1000]
       }
     ]
   },

@@ -12,6 +12,10 @@ from tthcc_an.event_bdt.plotting import (
     plot_process_score_shapes,
     plot_roc_curve,
 )
+from tthcc_an.event_bdt.prediction import (
+    PREDICTION_MODE_CHOICES,
+    predict_event_bdt_to_root,
+)
 from tthcc_an.event_bdt.training import load_predictions_payload, train_event_bdt
 
 
@@ -50,6 +54,43 @@ def _build_parser() -> argparse.ArgumentParser:
 
     evaluate = subparsers.add_parser("evaluate", help="Make ROC and score-shape plots from saved predictions.")
     evaluate.add_argument("--config", required=True, help="Path to the event-BDT training config.")
+
+    predict = subparsers.add_parser("predict", help="Apply trained event-BDT models and write scored ROOT files.")
+    predict.add_argument("--config", required=True, help="Path to the event-BDT training config.")
+    predict.add_argument(
+        "--samples-config",
+        help="Optional sample config to score. Defaults to the training config's samples_config.",
+    )
+    predict.add_argument(
+        "--outdir",
+        help="Optional output directory for scored ROOT files. Defaults to <training outdir>/scored_root.",
+    )
+    predict.add_argument(
+        "--score-branch",
+        default="bdt_score",
+        help="Name of the output score branch to write.",
+    )
+    predict.add_argument(
+        "--prediction-mode",
+        choices=PREDICTION_MODE_CHOICES,
+        default="mean",
+        help="Prediction mode: mean model score, fold-routed score, or both.",
+    )
+    predict.add_argument(
+        "--score-all-events",
+        action="store_true",
+        help="Score every event instead of only those passing base_selection.",
+    )
+    predict.add_argument(
+        "--max-files-per-sample",
+        type=int,
+        help="Optional cap on the number of input ROOT files per sample.",
+    )
+    predict.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite existing scored ROOT files in the output directory.",
+    )
 
     return parser
 
@@ -171,6 +212,22 @@ def main() -> None:
         print("Event-BDT evaluation plots finished.")
         print(f"Plot directory: {config.plot_dir_path}")
         print(f"Weighted AUC: {summary['weighted_auc']:.4f}")
+        return
+
+    if args.command == "predict":
+        summary = predict_event_bdt_to_root(
+            config,
+            samples_config_path=args.samples_config,
+            outdir=args.outdir,
+            score_branch=str(args.score_branch),
+            prediction_mode=str(args.prediction_mode),
+            score_selection_only=not bool(args.score_all_events),
+            force=bool(args.force),
+            max_files_per_sample=args.max_files_per_sample,
+        )
+        print("Event-BDT prediction finished.")
+        print(f"Output directory: {summary['prediction_outdir']}")
+        print(f"Written files: {summary['written_files']}")
         return
 
     raise ValueError(f"Unknown command: {args.command}")

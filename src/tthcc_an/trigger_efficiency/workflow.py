@@ -67,6 +67,17 @@ def _histogram(values: np.ndarray, weights: np.ndarray, bins: np.ndarray) -> tup
     return hist.astype(np.float64), hist_w2.astype(np.float64)
 
 
+def _all_trigger_branches(config: TriggerEfficiencyConfig) -> list[str]:
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for triggers in [config.triggers, *config.trigger_groups.values(), *config.or_groups.values()]:
+        for trigger in triggers:
+            if trigger not in seen:
+                seen.add(trigger)
+                ordered.append(trigger)
+    return ordered
+
+
 def _empty_accumulators(config: TriggerEfficiencyConfig) -> dict[str, dict[str, Any]]:
     accumulators: dict[str, dict[str, Any]] = {}
     for variable in config.variables:
@@ -76,7 +87,7 @@ def _empty_accumulators(config: TriggerEfficiencyConfig) -> dict[str, dict[str, 
             "denominator_w2": {sample.process: np.zeros(n_bins, dtype=np.float64) for sample in config.samples},
             "numerator": {
                 trigger: {sample.process: np.zeros(n_bins, dtype=np.float64) for sample in config.samples}
-                for trigger in config.triggers
+                for trigger in _all_trigger_branches(config)
             },
         }
         for or_name in config.or_groups:
@@ -87,14 +98,13 @@ def _empty_accumulators(config: TriggerEfficiencyConfig) -> dict[str, dict[str, 
 
 
 def _validate_group_triggers(config: TriggerEfficiencyConfig) -> None:
-    known = set(config.triggers)
-    unknown: dict[str, list[str]] = {}
-    for group_name, triggers in {**config.trigger_groups, **config.or_groups}.items():
-        missing = [trigger for trigger in triggers if trigger not in known]
-        if missing:
-            unknown[group_name] = missing
-    if unknown:
-        raise ValueError(f"Trigger groups reference triggers not in study.triggers: {unknown}")
+    empty_groups = [
+        group_name
+        for group_name, triggers in {**config.trigger_groups, **config.or_groups}.items()
+        if not triggers
+    ]
+    if empty_groups:
+        raise ValueError(f"Trigger groups must not be empty: {empty_groups}")
 
 
 def _read_and_accumulate(
@@ -106,7 +116,8 @@ def _read_and_accumulate(
     sample_summaries: list[dict[str, Any]] = []
 
     variable_names = [variable.name for variable in config.variables]
-    required_branches = sorted(set(variable_names + config.triggers + [config.weight_branch]))
+    trigger_branches = _all_trigger_branches(config)
+    required_branches = sorted(set(variable_names + trigger_branches + [config.weight_branch]))
 
     for sample in config.samples:
         sample_norm, gen_sumw, xsec_fb = _sample_normalization(
@@ -147,7 +158,7 @@ def _read_and_accumulate(
 
                     trigger_values = {
                         trigger: np.asarray(columns[trigger], dtype=bool)
-                        for trigger in config.triggers
+                        for trigger in trigger_branches
                     }
                     or_values = {
                         or_name: np.logical_or.reduce([trigger_values[trigger] for trigger in triggers])

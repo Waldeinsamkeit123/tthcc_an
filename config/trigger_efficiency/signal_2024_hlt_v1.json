@@ -31,12 +31,40 @@
       {
         "name": "TargetFatJet_pt",
         "label": "Target AK8 jet pT [GeV]",
-        "bins": [250, 300, 350, 400, 450, 500, 600, 700, 800, 1000, 1200]
+        "bins": [
+          250,
+          300,
+          350,
+          400,
+          450,
+          500,
+          600,
+          700,
+          800,
+          1000,
+          1200
+        ]
       },
       {
         "name": "genhiggs_pt",
         "label": "gen Higgs pT [GeV]",
-        "bins": [0, 100, 150, 200, 250, 300, 350, 400, 450, 500, 600, 700, 800, 1000, 1200]
+        "bins": [
+          0,
+          100,
+          150,
+          200,
+          250,
+          300,
+          350,
+          400,
+          450,
+          500,
+          600,
+          700,
+          800,
+          1000,
+          1200
+        ]
       }
     ],
     "triggers": [
@@ -114,6 +142,28 @@
         "HLT_AK8PFJet275_SoftDropMass40_PNetBB0p06",
         "HLT_AK8PFJet275_SoftDropMass40_PNetBB0p10"
       ],
+      "unprescaled_ak8_lowpt": [
+        "HLT_AK8PFJet220_SoftDropMass40_PNetBB0p06_DoubleAK4PFJet60_30_PNet2BTagMean0p50",
+        "HLT_AK8PFJet220_SoftDropMass40_PNetBB0p06_DoubleAK4PFJet60_30_PNet2BTagMean0p53",
+        "HLT_AK8PFJet220_SoftDropMass40_PNetBB0p06_DoubleAK4PFJet60_30_PNet2BTagMean0p55",
+        "HLT_AK8PFJet220_SoftDropMass40_PNetBB0p06_DoubleAK4PFJet60_30_PNet2BTagMean0p60",
+        "HLT_AK8PFJet230_SoftDropMass40_PNetBB0p06",
+        "HLT_AK8PFJet230_SoftDropMass40_PNetBB0p10",
+        "HLT_AK8PFJet250_SoftDropMass40_PNetBB0p06",
+        "HLT_AK8PFJet250_SoftDropMass40_PNetBB0p10",
+        "HLT_AK8PFJet275_Nch40",
+        "HLT_AK8PFJet275_Nch45",
+        "HLT_AK8PFJet275_SoftDropMass40_PNetBB0p06",
+        "HLT_AK8PFJet275_SoftDropMass40_PNetBB0p10"
+      ],
+      "unprescaled_ak8_highpt": [
+        "HLT_AK8PFJet380_SoftDropMass30",
+        "HLT_AK8PFJet400_SoftDropMass30",
+        "HLT_AK8PFJet425_SoftDropMass30",
+        "HLT_AK8PFJet450_SoftDropMass30",
+        "HLT_AK8PFJet500",
+        "HLT_AK8PFJet550"
+      ],
       "pfht_multijet_pnet": [
         "HLT_PFHT340_QuadPFJet70_50_40_40_PNet2BTagMean0p70",
         "HLT_PFHT280_QuadPFJet30_PNet2BTagMean0p55",
@@ -130,33 +180,7 @@
       ]
     },
     "or_groups": {
-      "OR_all_requested": [
-        "HLT_AK8PFJet140",
-        "HLT_AK8PFJet200",
-        "HLT_AK8PFJet220_SoftDropMass40",
-        "HLT_AK8PFJet220_SoftDropMass40_PNetBB0p06_DoubleAK4PFJet60_30_PNet2BTagMean0p50",
-        "HLT_AK8PFJet220_SoftDropMass40_PNetBB0p06_DoubleAK4PFJet60_30_PNet2BTagMean0p53",
-        "HLT_AK8PFJet220_SoftDropMass40_PNetBB0p06_DoubleAK4PFJet60_30_PNet2BTagMean0p55",
-        "HLT_AK8PFJet220_SoftDropMass40_PNetBB0p06_DoubleAK4PFJet60_30_PNet2BTagMean0p60",
-        "HLT_AK8PFJet230_SoftDropMass40",
-        "HLT_AK8PFJet230_SoftDropMass40_PNetBB0p06",
-        "HLT_AK8PFJet230_SoftDropMass40_PNetBB0p10",
-        "HLT_AK8PFJet250_SoftDropMass40_PNetBB0p06",
-        "HLT_AK8PFJet250_SoftDropMass40_PNetBB0p10",
-        "HLT_AK8PFJet260",
-        "HLT_AK8PFJet275_Nch40",
-        "HLT_AK8PFJet275_Nch45",
-        "HLT_AK8PFJet275_SoftDropMass40_PNetBB0p06",
-        "HLT_AK8PFJet275_SoftDropMass40_PNetBB0p10",
-        "HLT_AK8PFJet320",
-        "HLT_AK8PFJet380_SoftDropMass30",
-        "HLT_AK8PFJet400",
-        "HLT_AK8PFJet400_SoftDropMass30",
-        "HLT_AK8PFJet425_SoftDropMass30",
-        "HLT_AK8PFJet450",
-        "HLT_AK8PFJet450_SoftDropMass30",
-        "HLT_AK8PFJet500",
-        "HLT_AK8PFJet550",
+      "OR_resolved": [
         "HLT_PFHT1050",
         "HLT_PFHT340_QuadPFJet70_50_40_40_PNet2BTagMean0p70",
         "HLT_PFHT280_QuadPFJet30_PNet2BTagMean0p55",
@@ -172,47 +196,22 @@
         "HLT_PFHT330PT30_QuadPFJet_75_60_45_40_PNet3BTag_2p0"
       ],
       "OR_ak8": [
-        "HLT_AK8PFJet140",
-        "HLT_AK8PFJet200",
-        "HLT_AK8PFJet220_SoftDropMass40",
         "HLT_AK8PFJet220_SoftDropMass40_PNetBB0p06_DoubleAK4PFJet60_30_PNet2BTagMean0p50",
         "HLT_AK8PFJet220_SoftDropMass40_PNetBB0p06_DoubleAK4PFJet60_30_PNet2BTagMean0p53",
         "HLT_AK8PFJet220_SoftDropMass40_PNetBB0p06_DoubleAK4PFJet60_30_PNet2BTagMean0p55",
         "HLT_AK8PFJet220_SoftDropMass40_PNetBB0p06_DoubleAK4PFJet60_30_PNet2BTagMean0p60",
-        "HLT_AK8PFJet230_SoftDropMass40",
         "HLT_AK8PFJet230_SoftDropMass40_PNetBB0p06",
         "HLT_AK8PFJet230_SoftDropMass40_PNetBB0p10",
         "HLT_AK8PFJet250_SoftDropMass40_PNetBB0p06",
         "HLT_AK8PFJet250_SoftDropMass40_PNetBB0p10",
-        "HLT_AK8PFJet260",
-        "HLT_AK8PFJet275_Nch40",
-        "HLT_AK8PFJet275_Nch45",
         "HLT_AK8PFJet275_SoftDropMass40_PNetBB0p06",
         "HLT_AK8PFJet275_SoftDropMass40_PNetBB0p10",
-        "HLT_AK8PFJet320",
         "HLT_AK8PFJet380_SoftDropMass30",
-        "HLT_AK8PFJet400",
         "HLT_AK8PFJet400_SoftDropMass30",
         "HLT_AK8PFJet425_SoftDropMass30",
-        "HLT_AK8PFJet450",
         "HLT_AK8PFJet450_SoftDropMass30",
         "HLT_AK8PFJet500",
         "HLT_AK8PFJet550"
-      ],
-      "OR_pfht_multijet_pnet": [
-        "HLT_PFHT1050",
-        "HLT_PFHT340_QuadPFJet70_50_40_40_PNet2BTagMean0p70",
-        "HLT_PFHT280_QuadPFJet30_PNet2BTagMean0p55",
-        "HLT_PFHT280_QuadPFJet30_PNet2BTagMean0p60",
-        "HLT_PFHT280_QuadPFJet35_PNet2BTagMean0p60",
-        "HLT_PFHT400_SixPFJet32_PNet2BTagMean0p50",
-        "HLT_PFHT450_SixPFJet36_PNetBTag0p35",
-        "HLT_PFHT400_FivePFJet_120_120_60_30_30_PNet2BTag_5p6",
-        "HLT_PFHT400_FivePFJet_120_120_60_30_30_PNet2BTag_4p3",
-        "HLT_PFHT250_QuadPFJet25_PNet2BTagMean0p55",
-        "HLT_PFHT250_QuadPFJet30_PNet2BTagMean0p55",
-        "HLT_PFHT330PT30_QuadPFJet_75_60_45_40_PNet3BTag_4p3",
-        "HLT_PFHT330PT30_QuadPFJet_75_60_45_40_PNet3BTag_2p0"
       ]
     }
   }
