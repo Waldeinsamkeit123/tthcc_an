@@ -5,11 +5,35 @@ from typing import Any
 import numpy as np
 
 
+SIGNAL_GROUP = "signal"
+BACKGROUND_GROUP = "background"
+
+
 def _safe_ratio(numerator: np.ndarray, denominator: np.ndarray) -> np.ndarray:
     out = np.zeros_like(numerator, dtype=np.float64)
     valid = denominator > 0
     out[valid] = numerator[valid] / denominator[valid]
     return out
+
+
+
+def _label_group_masks(
+    labels: np.ndarray,
+    train_mask: np.ndarray,
+    class_groups: list[str],
+) -> tuple[np.ndarray, np.ndarray]:
+    signal_indices = np.array(
+        [index for index, group in enumerate(class_groups) if group == SIGNAL_GROUP],
+        dtype=np.int16,
+    )
+    background_indices = np.array(
+        [index for index, group in enumerate(class_groups) if group == BACKGROUND_GROUP],
+        dtype=np.int16,
+    )
+    signal_mask = train_mask & np.isin(labels, signal_indices)
+    background_mask = train_mask & np.isin(labels, background_indices)
+    return signal_mask, background_mask
+
 
 
 def build_reweighted_training_weights(
@@ -18,15 +42,15 @@ def build_reweighted_training_weights(
     train_mask: np.ndarray,
     columns: dict[str, np.ndarray],
     reweighting_config: dict[str, Any],
+    class_groups: list[str],
 ) -> tuple[np.ndarray, dict[str, Any]]:
     weights = np.asarray(base_weights, dtype=np.float64).copy()
     if not bool(reweighting_config.get("enabled", False)):
         return weights, {"enabled": False, "variables": []}
 
-    signal_mask = train_mask & (labels == 1)
-    background_mask = train_mask & (labels == 0)
+    signal_mask, background_mask = _label_group_masks(labels, train_mask, class_groups)
     if not np.any(signal_mask) or not np.any(background_mask):
-        return weights, {"enabled": False, "reason": "missing signal or background events"}
+        return weights, {"enabled": False, "reason": "missing signal-like or background-like events"}
 
     target_signal_sum = float(np.sum(weights[signal_mask]))
     background_sum = float(np.sum(weights[background_mask]))
@@ -45,7 +69,7 @@ def build_reweighted_training_weights(
                 {
                     "name": name,
                     "status": "skipped",
-                    "reason": "no finite signal or background entries",
+                    "reason": "no finite signal-like or background-like entries",
                 }
             )
             continue

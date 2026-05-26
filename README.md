@@ -297,17 +297,20 @@ The repository also contains a prototype event-level BDT workflow for the 2024
 Current scope of the prototype:
 
 - channel: `0L`
-- training signal: `ttHcc + ttHbb`
-- training background: `ttbar`, `tt+bb`, `ttV`, `tt+ll`, `single top`, `W+jets`, `Z+jets`, `QCD`
-- eval-only sample: `TTH-HtoNon2B` is not used for training and is only shown in score-shape plots
+- training classes: `ttHcc`, `ttHbb`, `ttbar`, `qcd`, `others`
+- process mapping:
+  - `ttHcc -> ttHcc`
+  - `ttHbb -> ttHbb`
+  - `ttbar -> ttbar + ttbb + ttll`
+  - `qcd -> qcd`
+  - `others -> ttv + single_top + wjets + zjets`
+- eval-only sample: `TTH-HtoNon2B` is not used for training and is only shown in process-level score plots
 - data source: Pepper-produced `Events` trees under `/eos/user/h/hanw/ttHcc/pepper_data/2024/0L_v1_event`
 
 The baseline config currently uses a simple `0L` preselection:
 
-- `MET_pt >= 200`
-- `ncleanedjet >= 4`
 - `ntargetfatjet >= 1`
-- `TargetFatJet_pt >= 250`
+- `TargetFatJet_pt >= 300`
 - `|TargetFatJet_eta| <= 2.4`
 
 The first-pass features mix event-level and target-fatjet observables such as:
@@ -331,11 +334,63 @@ The shipped 2024 sample config now points to:
 The training logic currently uses:
 
 - deterministic k-fold splitting from `run`, `luminosityBlock`, and `event`
-- optional background shape reweighting in configured variables
-- XGBoost binary classification
-- out-of-fold score storage for ROC evaluation
+- optional background-shape reweighting between the combined signal-like classes (`ttHcc + ttHbb`) and the combined background-like classes (`ttbar + qcd + others`)
+- XGBoost multiclass probability classification with `multi:softprob`
+- out-of-fold per-class probability storage for ROC evaluation
 
 ### Event-BDT Commands
+
+Recommended full multiclass workflow:
+
+1. set up the runtime environment and enter the repository:
+
+```bash
+source /cvmfs/sft.cern.ch/lcg/views/LCG_108/x86_64-el9-gcc15-opt/setup.sh
+cd /eos/user/h/hanw/ttHcc/tthcc_an
+```
+
+2. optionally build or refresh the prepared cache first:
+
+```bash
+python scripts/run_event_bdt.py \
+  prepare \
+  --config config/event_bdt/train_ttHcc_0l_baseline.json
+```
+
+3. run the full five-class training:
+
+```bash
+python scripts/run_event_bdt.py \
+  train \
+  --config config/event_bdt/train_ttHcc_0l_baseline.json
+```
+
+4. if the ntuples, selection, features, or config changed and you want a clean rerun, force both cache and model regeneration:
+
+```bash
+python scripts/run_event_bdt.py \
+  train \
+  --config config/event_bdt/train_ttHcc_0l_baseline.json \
+  --force-prepare \
+  --force-retrain
+```
+
+5. redraw the ROC and score-shape plots from the saved prediction payload:
+
+```bash
+python scripts/run_event_bdt.py \
+  evaluate \
+  --config config/event_bdt/train_ttHcc_0l_baseline.json
+```
+
+6. if you need the scores inside ROOT files, run prediction after training:
+
+```bash
+python scripts/run_event_bdt.py \
+  predict \
+  --config config/event_bdt/train_ttHcc_0l_baseline.json
+```
+
 
 Prepare a cached event table:
 
@@ -411,17 +466,18 @@ python scripts/run_event_bdt.py \
 
 ### Event-BDT Outputs
 
-For a standard event-BDT training run, the output directory contains:
+For a standard multiclass event-BDT training run, the output directory contains:
 
 - `prepared_inputs.npz`
 - `predictions.npz`
 - `training_summary.json`
 - `feature_importance.json`
 - `models/*.json`
-- `plots/roc_oof.png`
-- `plots/score_signal_vs_background.png`
-- `plots/score_by_process.png`
-- `plots/score_tth_family.png`
+- `plots/roc_ovr.png`
+- `plots/score_by_training_class__ttHcc.png`, `plots/score_by_training_class__ttHbb.png`, `plots/score_by_training_class__ttbar.png`, `plots/score_by_training_class__qcd.png`, `plots/score_by_training_class__others.png`
+- `plots/score_by_process__ttHcc.png`, `plots/score_by_process__ttHbb.png`, `plots/score_by_process__ttbar.png`, `plots/score_by_process__qcd.png`, `plots/score_by_process__others.png`
+
+Legacy binary configs still produce the old `roc_oof.png`, `score_signal_vs_background.png`, `score_by_process.png`, and `score_tth_family.png` outputs.
 
 When `predict` is run, it additionally writes:
 
@@ -437,9 +493,10 @@ The `predict` step is separate from `train` and `evaluate`:
 Each scored ROOT file keeps the full original `Events` tree and appends one or
 more BDT score branches:
 
-- default: `bdt_score`
-- `--prediction-mode both`: `bdt_score_mean` and `bdt_score_fold_routed`
-- `--score-branch <name>` changes the output branch prefix
+- default multiclass branches: `bdt_score_ttHcc`, `bdt_score_ttHbb`, `bdt_score_ttbar`, `bdt_score_qcd`, `bdt_score_others`
+- `--prediction-mode both` in multiclass mode writes `bdt_score_mean_<class>` and `bdt_score_fold_routed_<class>` for each of the five classes
+- legacy binary configs still write `bdt_score`, or `bdt_score_mean` and `bdt_score_fold_routed`
+- `--score-branch <name>` changes the shared output branch prefix
 
 By default, every event is preserved in the output tree, but only events that
 pass the configured `base_selection` receive a finite score. Other events keep

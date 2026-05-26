@@ -22,6 +22,12 @@ DEFAULT_PLOT_DIR_NAME = "plots"
 DEFAULT_MODEL_NAME = "xgb_event_bdt"
 DEFAULT_NUM_BOOST_ROUND = 500
 DEFAULT_EARLY_STOPPING_ROUNDS = 30
+TRAINING_GROUP_SIGNAL = "signal"
+TRAINING_GROUP_BACKGROUND = "background"
+TRAINING_GROUP_CHOICES = {
+    TRAINING_GROUP_SIGNAL,
+    TRAINING_GROUP_BACKGROUND,
+}
 
 
 @dataclass
@@ -43,6 +49,22 @@ class EventBdtSamplesConfig:
 
 
 @dataclass
+class EventBdtTrainingClass:
+    name: str
+    label: str
+    group: str
+    processes: list[str]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "label": self.label,
+            "group": self.group,
+            "processes": list(self.processes),
+        }
+
+
+@dataclass
 class EventBdtConfig:
     config_path: Path
     repo_root: Path
@@ -59,8 +81,8 @@ class EventBdtConfig:
     max_files_per_sample: int | None
     uproot_step_size: str
     flatten_first_branches: list[str]
-    signal_processes: list[str]
-    background_processes: list[str]
+    training_mode: str
+    training_classes: list[EventBdtTrainingClass]
     eval_processes_extra: list[str]
     model_name: str
     prepared_inputs_name: str
@@ -106,6 +128,67 @@ class EventBdtConfig:
     def plot_dir_path(self) -> Path:
         return self.outdir / self.plot_dir_name
 
+    @property
+    def class_names(self) -> list[str]:
+        return [item.name for item in self.training_classes]
+
+    @property
+    def class_labels(self) -> list[str]:
+        return [item.label for item in self.training_classes]
+
+    @property
+    def class_groups(self) -> list[str]:
+        return [item.group for item in self.training_classes]
+
+    @property
+    def num_training_classes(self) -> int:
+        return len(self.training_classes)
+
+    @property
+    def signal_processes(self) -> list[str]:
+        processes: list[str] = []
+        for item in self.training_classes:
+            if item.group == TRAINING_GROUP_SIGNAL:
+                processes.extend(item.processes)
+        return processes
+
+    @property
+    def background_processes(self) -> list[str]:
+        processes: list[str] = []
+        for item in self.training_classes:
+            if item.group == TRAINING_GROUP_BACKGROUND:
+                processes.extend(item.processes)
+        return processes
+
+    @property
+    def signal_class_indices(self) -> list[int]:
+        return [
+            index
+            for index, item in enumerate(self.training_classes)
+            if item.group == TRAINING_GROUP_SIGNAL
+        ]
+
+    @property
+    def background_class_indices(self) -> list[int]:
+        return [
+            index
+            for index, item in enumerate(self.training_classes)
+            if item.group == TRAINING_GROUP_BACKGROUND
+        ]
+
+    @property
+    def process_to_class_index(self) -> dict[str, int]:
+        mapping: dict[str, int] = {}
+        for class_index, item in enumerate(self.training_classes):
+            for process in item.processes:
+                mapping[process] = class_index
+        return mapping
+
+    @property
+    def training_class_payload(self) -> list[dict[str, Any]]:
+        return [item.to_dict() for item in self.training_classes]
+
+
 
 def _resolve_relative_to(path: str | Path, anchor: Path) -> Path:
     candidate = Path(path)
@@ -114,12 +197,109 @@ def _resolve_relative_to(path: str | Path, anchor: Path) -> Path:
     return (anchor / candidate).resolve()
 
 
+
 def _resolve_output_dir(repo_root: Path, configured_outdir: str | None) -> Path:
     outdir = configured_outdir or DEFAULT_OUTPUT_DIR
     candidate = Path(outdir)
     if candidate.is_absolute():
         return candidate
     return (repo_root / candidate).resolve()
+
+
+
+def _normalize_training_classes(
+    study: dict[str, Any],
+    eval_processes_extra: list[str],
+) -> tuple[str, list[EventBdtTrainingClass]]:
+    training_classes_payload = study.get("training_classes")
+    if training_classes_payload is None:
+        signal_processes = list(study.get("signal_processes", []))
+        background_processes = list(study.get("background_processes", []))
+        if not signal_processes or not background_processes:
+            raise ValueError(
+                "Config must define either 'study.training_classes' or both "
+                "'study.signal_processes' and 'study.background_processes'."
+            )
+        return (
+            "binary",
+            [
+                EventBdtTrainingClass(
+                    name="signal",
+                    label="Signal",
+                    group=TRAINING_GROUP_SIGNAL,
+                    processes=signal_processes,
+                ),
+                EventBdtTrainingClass(
+                    name="background",
+                    label="Background",
+                    group=TRAINING_GROUP_BACKGROUND,
+                    processes=background_processes,
+                ),
+            ],
+        )
+
+    if not isinstance(training_classes_payload, list) or not training_classes_payload:
+        raise ValueError("Config field 'study.training_classes' must be a non-empty list.")
+
+    training_classes: list[EventBdtTrainingClass] = []
+    seen_names: set[str] = set()
+    seen_processes: set[str] = set()
+    for index, raw_class in enumerate(training_classes_payload):
+        name = str(raw_class.get("name", "")).strip()
+        label = str(raw_class.get("label", name)).strip()
+        group = str(raw_class.get("group", "")).strip()
+        processes = [str(item).strip() for item in raw_class.get("processes", [])]
+        if not name:
+            raise ValueError(f"Training class at index {index} is missing a non-empty 'name'.")
+        if name in seen_names:
+            raise ValueError(f"Duplicate training class name: {name}")
+        if not label:
+            raise ValueError(f"Training class '{name}' is missing a non-empty 'label'.")
+        if group not in TRAINING_GROUP_CHOICES:
+            choices = ", ".join(sorted(TRAINING_GROUP_CHOICES))
+            raise ValueError(
+                f"Training class '{name}' has invalid group '{group}'. Allowed: {choices}."
+            )
+        if not processes:
+            raise ValueError(f"Training class '{name}' must define a non-empty process list.")
+
+        overlap = seen_processes.intersection(processes)
+        if overlap:
+            repeated = ", ".join(sorted(overlap))
+            raise ValueError(
+                f"Training class '{name}' reuses process(es) already assigned elsewhere: {repeated}"
+            )
+        eval_overlap = set(processes).intersection(eval_processes_extra)
+        if eval_overlap:
+            repeated = ", ".join(sorted(eval_overlap))
+            raise ValueError(
+                f"Training class '{name}' overlaps with eval-only processes: {repeated}"
+            )
+
+        seen_names.add(name)
+        seen_processes.update(processes)
+        training_classes.append(
+            EventBdtTrainingClass(
+                name=name,
+                label=label,
+                group=group,
+                processes=processes,
+            )
+        )
+
+    groups = {item.group for item in training_classes}
+    if TRAINING_GROUP_SIGNAL not in groups:
+        raise ValueError("Config field 'study.training_classes' must include at least one signal class.")
+    if TRAINING_GROUP_BACKGROUND not in groups:
+        raise ValueError(
+            "Config field 'study.training_classes' must include at least one background class."
+        )
+    if len(training_classes) <= 1:
+        raise ValueError("At least two training classes are required.")
+
+    training_mode = "binary" if len(training_classes) == 2 else "multiclass"
+    return training_mode, training_classes
+
 
 
 def load_event_bdt_samples_config(
@@ -158,6 +338,7 @@ def load_event_bdt_samples_config(
         xsec_file=normalization.get("xsec_file"),
         lumi_fb=float(lumi_fb) if lumi_fb is not None else None,
     )
+
 
 
 def load_event_bdt_config(path: str | Path, repo_root: str | Path) -> EventBdtConfig:
@@ -204,12 +385,11 @@ def load_event_bdt_config(path: str | Path, repo_root: str | Path) -> EventBdtCo
         xgboost_payload.pop("early_stopping_rounds", DEFAULT_EARLY_STOPPING_ROUNDS)
     )
 
-    signal_processes = list(study.get("signal_processes", []))
-    background_processes = list(study.get("background_processes", []))
-    if not signal_processes or not background_processes:
-        raise ValueError(
-            "Config fields 'study.signal_processes' and 'study.background_processes' must both be non-empty lists."
-        )
+    eval_processes_extra = [str(item) for item in study.get("eval_processes_extra", [])]
+    training_mode, training_classes = _normalize_training_classes(
+        study,
+        eval_processes_extra=eval_processes_extra,
+    )
 
     return EventBdtConfig(
         config_path=config_path,
@@ -227,9 +407,9 @@ def load_event_bdt_config(path: str | Path, repo_root: str | Path) -> EventBdtCo
         max_files_per_sample=study.get("max_files_per_sample"),
         uproot_step_size=str(study.get("uproot_step_size", DEFAULT_UPROOT_STEP_SIZE)),
         flatten_first_branches=flatten_first_branches,
-        signal_processes=signal_processes,
-        background_processes=background_processes,
-        eval_processes_extra=list(study.get("eval_processes_extra", [])),
+        training_mode=training_mode,
+        training_classes=training_classes,
+        eval_processes_extra=eval_processes_extra,
         model_name=str(study.get("model_name", DEFAULT_MODEL_NAME)),
         prepared_inputs_name=str(study.get("prepared_inputs", DEFAULT_PREPARED_INPUTS_NAME)),
         predictions_name=str(study.get("predictions", DEFAULT_PREDICTIONS_NAME)),

@@ -13,6 +13,8 @@ from tthcc_an.event_bdt.config import EventBdtConfig, load_event_bdt_samples_con
 from tthcc_an.event_bdt.dataset import _compute_fold_ids, _extract_branch, _selection_mask
 
 
+BINARY_MODE = "binary"
+MULTICLASS_MODE = "multiclass"
 PREDICTION_MODE_MEAN = "mean"
 PREDICTION_MODE_FOLD_ROUTED = "fold_routed"
 PREDICTION_MODE_BOTH = "both"
@@ -33,9 +35,12 @@ class FoldModel:
 
 @dataclass
 class TrainedEnsemble:
+    training_mode: str
     feature_names: list[str]
+    class_names: list[str]
     fold_models: list[FoldModel]
     k_folds: int
+
 
 
 def _require_prediction_dependencies():
@@ -49,9 +54,11 @@ def _require_prediction_dependencies():
     return xgb
 
 
+
 def _save_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+
 
 
 def _resolve_prediction_outdir(config: EventBdtConfig, configured_outdir: str | None) -> Path:
@@ -61,6 +68,7 @@ def _resolve_prediction_outdir(config: EventBdtConfig, configured_outdir: str | 
     if candidate.is_absolute():
         return candidate
     return (config.repo_root / candidate).resolve()
+
 
 
 def _load_training_summary(config: EventBdtConfig) -> dict[str, Any]:
@@ -73,6 +81,7 @@ def _load_training_summary(config: EventBdtConfig) -> dict[str, Any]:
         return json.load(handle)
 
 
+
 def load_trained_ensemble(config: EventBdtConfig) -> TrainedEnsemble:
     xgb = _require_prediction_dependencies()
     summary = _load_training_summary(config)
@@ -83,6 +92,14 @@ def load_trained_ensemble(config: EventBdtConfig) -> TrainedEnsemble:
         raise ValueError(
             "The training config features do not match the trained model summary. "
             "Retrain the model or use the same config that produced the trained outputs."
+        )
+
+    training_mode = str(summary.get("training_mode", config.training_mode))
+    class_names = list(summary.get("class_names", config.class_names))
+    if training_mode == MULTICLASS_MODE and class_names != list(config.class_names):
+        raise ValueError(
+            "The configured training classes do not match the trained model summary. "
+            "Use the matching config or retrain the models."
         )
 
     fold_summaries = list(summary.get("fold_summaries", []))
@@ -113,10 +130,13 @@ def load_trained_ensemble(config: EventBdtConfig) -> TrainedEnsemble:
         )
 
     return TrainedEnsemble(
+        training_mode=training_mode,
         feature_names=trained_feature_names,
+        class_names=class_names,
         fold_models=sorted(fold_models, key=lambda item: item.fold),
         k_folds=len(fold_models),
     )
+
 
 
 def _build_score_matrix(
@@ -128,12 +148,35 @@ def _build_score_matrix(
     )
 
 
+
+def _coerce_prediction_output(
+    raw_scores: np.ndarray,
+    n_rows: int,
+    ensemble: TrainedEnsemble,
+) -> np.ndarray:
+    scores = np.asarray(raw_scores, dtype=np.float32)
+    if ensemble.training_mode == MULTICLASS_MODE:
+        n_classes = len(ensemble.class_names)
+        if scores.ndim == 1:
+            scores = scores.reshape(n_rows, n_classes)
+        if scores.shape != (n_rows, n_classes):
+            raise ValueError(
+                "Unexpected multiclass prediction shape from XGBoost: "
+                f"got {scores.shape}, expected {(n_rows, n_classes)}."
+            )
+        return scores
+    return scores.reshape(n_rows)
+
+
+
 def _predict_mean_scores(
     ensemble: TrainedEnsemble,
     feature_matrix: np.ndarray,
 ) -> np.ndarray:
     xgb = _require_prediction_dependencies()
     if feature_matrix.shape[0] == 0:
+        if ensemble.training_mode == MULTICLASS_MODE:
+            return np.zeros((0, len(ensemble.class_names)), dtype=np.float32)
         return np.zeros(0, dtype=np.float32)
 
     matrix = xgb.DMatrix(
@@ -141,13 +184,26 @@ def _predict_mean_scores(
         feature_names=ensemble.feature_names,
         missing=np.nan,
     )
-    prediction_sum = np.zeros(feature_matrix.shape[0], dtype=np.float64)
-    for fold_model in ensemble.fold_models:
-        prediction_sum += fold_model.booster.predict(
-            matrix,
-            iteration_range=(0, fold_model.best_iteration + 1),
+    if ensemble.training_mode == MULTICLASS_MODE:
+        prediction_sum = np.zeros(
+            (feature_matrix.shape[0], len(ensemble.class_names)),
+            dtype=np.float64,
         )
+    else:
+        prediction_sum = np.zeros(feature_matrix.shape[0], dtype=np.float64)
+
+    for fold_model in ensemble.fold_models:
+        prediction_sum += _coerce_prediction_output(
+            fold_model.booster.predict(
+                matrix,
+                iteration_range=(0, fold_model.best_iteration + 1),
+            ),
+            n_rows=feature_matrix.shape[0],
+            ensemble=ensemble,
+        )
+
     return np.asarray(prediction_sum / float(len(ensemble.fold_models)), dtype=np.float32)
+
 
 
 def _predict_fold_routed_scores(
@@ -157,9 +213,19 @@ def _predict_fold_routed_scores(
 ) -> np.ndarray:
     xgb = _require_prediction_dependencies()
     if feature_matrix.shape[0] == 0:
+        if ensemble.training_mode == MULTICLASS_MODE:
+            return np.zeros((0, len(ensemble.class_names)), dtype=np.float32)
         return np.zeros(0, dtype=np.float32)
 
-    scores = np.full(feature_matrix.shape[0], np.nan, dtype=np.float32)
+    if ensemble.training_mode == MULTICLASS_MODE:
+        scores = np.full(
+            (feature_matrix.shape[0], len(ensemble.class_names)),
+            np.nan,
+            dtype=np.float32,
+        )
+    else:
+        scores = np.full(feature_matrix.shape[0], np.nan, dtype=np.float32)
+
     for fold_model in ensemble.fold_models:
         mask = fold_id == fold_model.fold
         if not np.any(mask):
@@ -169,14 +235,16 @@ def _predict_fold_routed_scores(
             feature_names=ensemble.feature_names,
             missing=np.nan,
         )
-        scores[mask] = np.asarray(
+        scores[mask] = _coerce_prediction_output(
             fold_model.booster.predict(
                 matrix,
                 iteration_range=(0, fold_model.best_iteration + 1),
             ),
-            dtype=np.float32,
+            n_rows=int(np.sum(mask)),
+            ensemble=ensemble,
         )
     return scores
+
 
 
 def _load_tree_chunk(
@@ -196,14 +264,32 @@ def _load_tree_chunk(
     )
 
 
-def _prediction_branch_names(score_branch: str, prediction_mode: str) -> list[str]:
+
+def _prediction_branch_names(
+    score_branch: str,
+    prediction_mode: str,
+    training_mode: str,
+    class_names: list[str],
+) -> list[str]:
+    if training_mode == BINARY_MODE:
+        if prediction_mode == PREDICTION_MODE_MEAN:
+            return [score_branch]
+        if prediction_mode == PREDICTION_MODE_FOLD_ROUTED:
+            return [score_branch]
+        if prediction_mode == PREDICTION_MODE_BOTH:
+            return [f"{score_branch}_mean", f"{score_branch}_fold_routed"]
+        raise ValueError(f"Unknown prediction mode: {prediction_mode}")
+
     if prediction_mode == PREDICTION_MODE_MEAN:
-        return [score_branch]
+        return [f"{score_branch}_{class_name}" for class_name in class_names]
     if prediction_mode == PREDICTION_MODE_FOLD_ROUTED:
-        return [score_branch]
+        return [f"{score_branch}_{class_name}" for class_name in class_names]
     if prediction_mode == PREDICTION_MODE_BOTH:
-        return [f"{score_branch}_mean", f"{score_branch}_fold_routed"]
+        branches = [f"{score_branch}_mean_{class_name}" for class_name in class_names]
+        branches.extend(f"{score_branch}_fold_routed_{class_name}" for class_name in class_names)
+        return branches
     raise ValueError(f"Unknown prediction mode: {prediction_mode}")
+
 
 
 def _score_chunk(
@@ -239,22 +325,25 @@ def _score_chunk(
     feature_matrix = _build_score_matrix(columns, ensemble.feature_names)
 
     if prediction_mode in {PREDICTION_MODE_MEAN, PREDICTION_MODE_BOTH}:
-        mean_branch = score_branch
-        if prediction_mode == PREDICTION_MODE_BOTH:
-            mean_branch = f"{score_branch}_mean"
-        scores = np.full(n_events, np.nan, dtype=np.float32)
-        if np.any(score_mask):
-            scores[score_mask] = _predict_mean_scores(
-                ensemble,
-                feature_matrix[score_mask],
-            )
-        outputs[mean_branch] = scores
+        mean_scores = _predict_mean_scores(ensemble, feature_matrix[score_mask]) if np.any(score_mask) else None
+        if ensemble.training_mode == MULTICLASS_MODE:
+            for class_index, class_name in enumerate(ensemble.class_names):
+                branch_name = f"{score_branch}_{class_name}"
+                if prediction_mode == PREDICTION_MODE_BOTH:
+                    branch_name = f"{score_branch}_mean_{class_name}"
+                scores = np.full(n_events, np.nan, dtype=np.float32)
+                if mean_scores is not None:
+                    scores[score_mask] = mean_scores[:, class_index]
+                outputs[branch_name] = scores
+        else:
+            branch_name = score_branch if prediction_mode == PREDICTION_MODE_MEAN else f"{score_branch}_mean"
+            scores = np.full(n_events, np.nan, dtype=np.float32)
+            if mean_scores is not None:
+                scores[score_mask] = mean_scores
+            outputs[branch_name] = scores
 
     if prediction_mode in {PREDICTION_MODE_FOLD_ROUTED, PREDICTION_MODE_BOTH}:
-        fold_branch = score_branch
-        if prediction_mode == PREDICTION_MODE_BOTH:
-            fold_branch = f"{score_branch}_fold_routed"
-        scores = np.full(n_events, np.nan, dtype=np.float32)
+        routed_scores = None
         if np.any(score_mask):
             fold_id = _compute_fold_ids(
                 np.asarray(columns["run"][score_mask], dtype=np.int64),
@@ -262,14 +351,30 @@ def _score_chunk(
                 np.asarray(columns["event"][score_mask], dtype=np.int64),
                 config.k_folds,
             )
-            scores[score_mask] = _predict_fold_routed_scores(
+            routed_scores = _predict_fold_routed_scores(
                 ensemble,
                 feature_matrix[score_mask],
                 fold_id,
             )
-        outputs[fold_branch] = scores
+
+        if ensemble.training_mode == MULTICLASS_MODE:
+            for class_index, class_name in enumerate(ensemble.class_names):
+                branch_name = f"{score_branch}_{class_name}"
+                if prediction_mode == PREDICTION_MODE_BOTH:
+                    branch_name = f"{score_branch}_fold_routed_{class_name}"
+                scores = np.full(n_events, np.nan, dtype=np.float32)
+                if routed_scores is not None:
+                    scores[score_mask] = routed_scores[:, class_index]
+                outputs[branch_name] = scores
+        else:
+            branch_name = score_branch if prediction_mode == PREDICTION_MODE_FOLD_ROUTED else f"{score_branch}_fold_routed"
+            scores = np.full(n_events, np.nan, dtype=np.float32)
+            if routed_scores is not None:
+                scores[score_mask] = routed_scores
+            outputs[branch_name] = scores
 
     return outputs
+
 
 
 def predict_event_bdt_to_root(
@@ -326,7 +431,12 @@ def predict_event_bdt_to_root(
 
                 tree = input_file[config.tree_name]
                 input_branch_names = list(tree.keys())
-                output_score_branches = _prediction_branch_names(score_branch, prediction_mode)
+                output_score_branches = _prediction_branch_names(
+                    score_branch,
+                    prediction_mode,
+                    ensemble.training_mode,
+                    ensemble.class_names,
+                )
                 conflicting_branches = [
                     branch for branch in output_score_branches if branch in input_branch_names
                 ]
@@ -382,14 +492,22 @@ def predict_event_bdt_to_root(
         "config_path": str(config.config_path),
         "samples_config_path": str(Path(sample_config_to_use).resolve()),
         "prediction_outdir": str(output_root),
+        "training_mode": ensemble.training_mode,
+        "class_names": list(ensemble.class_names),
         "prediction_mode": prediction_mode,
         "score_branch": score_branch,
         "score_selection_only": score_selection_only,
+        "output_branches": _prediction_branch_names(
+            score_branch,
+            prediction_mode,
+            ensemble.training_mode,
+            ensemble.class_names,
+        ),
         "output_content": "full_events_tree_with_scores",
         "written_files": written_files,
         "skipped_existing": skipped_existing,
         "skipped_missing_tree": skipped_missing_tree,
         "sample_summaries": sample_summaries,
     }
-    _save_json(output_root / 'prediction_summary.json', summary)
+    _save_json(output_root / "prediction_summary.json", summary)
     return summary

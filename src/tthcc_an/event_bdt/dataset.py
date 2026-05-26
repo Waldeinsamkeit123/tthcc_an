@@ -17,8 +17,6 @@ from tthcc_an.event_bdt.config import (
 
 
 TRAIN_LABEL_IGNORE = -1
-TRAIN_LABEL_BACKGROUND = 0
-TRAIN_LABEL_SIGNAL = 1
 
 
 def _load_normalization_metadata(
@@ -47,6 +45,7 @@ def _load_normalization_metadata(
     return gen_sumw_map, xsec_map
 
 
+
 def _sample_normalization(
     sample: EventBdtSampleConfig,
     lumi_fb: float | None,
@@ -62,21 +61,47 @@ def _sample_normalization(
     return float(lumi_fb * xsec_fb / gen_sumw), gen_sumw, xsec_fb
 
 
+
 def _train_label_for_process(
     process: str,
-    signal_processes: list[str],
-    background_processes: list[str],
+    process_to_class_index: dict[str, int],
 ) -> int:
-    if process in signal_processes:
-        return TRAIN_LABEL_SIGNAL
-    if process in background_processes:
-        return TRAIN_LABEL_BACKGROUND
-    return TRAIN_LABEL_IGNORE
+    return int(process_to_class_index.get(process, TRAIN_LABEL_IGNORE))
+
+
+
+def _validate_training_assignment(
+    sample: EventBdtSampleConfig,
+    process_to_class_index: dict[str, int],
+    eval_processes_extra: set[str],
+) -> int:
+    if sample.role == "eval_only":
+        if sample.process in process_to_class_index:
+            raise ValueError(
+                f"Sample '{sample.name}' is marked eval_only but process '{sample.process}' "
+                "is also assigned to a training class."
+            )
+        return TRAIN_LABEL_IGNORE
+
+    if sample.process in eval_processes_extra:
+        raise ValueError(
+            f"Sample '{sample.name}' uses process '{sample.process}' which is listed in "
+            "study.eval_processes_extra but is not marked eval_only in the samples config."
+        )
+
+    label = _train_label_for_process(sample.process, process_to_class_index)
+    if label == TRAIN_LABEL_IGNORE:
+        raise ValueError(
+            f"Sample '{sample.name}' with process '{sample.process}' is not covered by any training class."
+        )
+    return label
+
 
 
 def _flatten_singleton_branch(values: ak.Array) -> np.ndarray:
     flattened = ak.fill_none(ak.firsts(values), np.nan)
     return np.asarray(ak.to_numpy(flattened), dtype=np.float64)
+
 
 
 def _extract_branch(
@@ -87,6 +112,13 @@ def _extract_branch(
     if name in flatten_first_branches:
         return _flatten_singleton_branch(values)
     return np.asarray(ak.to_numpy(values))
+
+
+
+def _filled_string_array(value: str, size: int) -> np.ndarray:
+    width = max(1, len(value))
+    return np.full(size, value, dtype=f"<U{width}")
+
 
 
 def _selection_mask(expression: str, columns: dict[str, np.ndarray]) -> np.ndarray:
@@ -100,6 +132,7 @@ def _selection_mask(expression: str, columns: dict[str, np.ndarray]) -> np.ndarr
     if result.ndim != 1:
         raise ValueError("The configured base selection must evaluate to a one-dimensional boolean mask.")
     return result
+
 
 
 def _compute_fold_ids(
@@ -121,6 +154,7 @@ def _compute_fold_ids(
     return np.asarray(hashed % np.uint64(k_folds), dtype=np.int16)
 
 
+
 def _save_npz(path: Path, arrays: dict[str, np.ndarray], metadata: dict[str, Any]) -> None:
     serializable_arrays = dict(arrays)
     serializable_arrays["metadata_json"] = np.array(
@@ -128,6 +162,7 @@ def _save_npz(path: Path, arrays: dict[str, np.ndarray], metadata: dict[str, Any
         dtype=np.str_,
     )
     np.savez_compressed(path, **serializable_arrays)
+
 
 
 def load_npz_payload(path: Path) -> tuple[dict[str, np.ndarray], dict[str, Any]]:
@@ -139,6 +174,7 @@ def load_npz_payload(path: Path) -> tuple[dict[str, np.ndarray], dict[str, Any]]
             if key != "metadata_json"
         }
     return arrays, metadata
+
 
 
 def prepare_event_bdt_inputs(config: EventBdtConfig, force: bool = False) -> Path:
@@ -163,6 +199,8 @@ def prepare_event_bdt_inputs(config: EventBdtConfig, force: bool = False) -> Pat
 
     requested_branches = config.requested_branches()
     flatten_first_branches = set(config.flatten_first_branches)
+    process_to_class_index = config.process_to_class_index
+    eval_processes_extra = set(config.eval_processes_extra)
 
     buffers: dict[str, list[np.ndarray]] = {name: [] for name in requested_branches}
     extra_buffers: dict[str, list[np.ndarray]] = {
@@ -191,10 +229,10 @@ def prepare_event_bdt_inputs(config: EventBdtConfig, force: bool = False) -> Pat
             gen_sumw_map,
             xsec_map,
         )
-        label_value = _train_label_for_process(
-            sample.process,
-            config.signal_processes,
-            config.background_processes,
+        label_value = _validate_training_assignment(
+            sample,
+            process_to_class_index=process_to_class_index,
+            eval_processes_extra=eval_processes_extra,
         )
         total_events = 0
         total_selected = 0
@@ -267,15 +305,15 @@ def prepare_event_bdt_inputs(config: EventBdtConfig, force: bool = False) -> Pat
                     for branch in requested_branches:
                         buffers[branch].append(np.asarray(chunk_columns[branch][mask]))
 
-                    extra_buffers["process"].append(np.full(selected, sample.process, dtype=np.str_))
-                    extra_buffers["label_text"].append(np.full(selected, sample.label, dtype=np.str_))
-                    extra_buffers["role"].append(np.full(selected, sample.role, dtype=np.str_))
+                    extra_buffers["process"].append(_filled_string_array(sample.process, selected))
+                    extra_buffers["label_text"].append(_filled_string_array(sample.label, selected))
+                    extra_buffers["role"].append(_filled_string_array(sample.role, selected))
                     extra_buffers["dataset_name"].append(
-                        np.full(selected, sample.dataset, dtype=np.str_)
+                        _filled_string_array(sample.dataset, selected)
                     )
-                    extra_buffers["sample_name"].append(np.full(selected, sample.name, dtype=np.str_))
+                    extra_buffers["sample_name"].append(_filled_string_array(sample.name, selected))
                     extra_buffers["train_label"].append(
-                        np.full(selected, label_value, dtype=np.int8)
+                        np.full(selected, label_value, dtype=np.int16)
                     )
                     extra_buffers["weight_signed"].append(weight_signed.astype(np.float64))
                     extra_buffers["train_weight"].append(train_weight.astype(np.float64))
@@ -291,6 +329,8 @@ def prepare_event_bdt_inputs(config: EventBdtConfig, force: bool = False) -> Pat
                 "process": sample.process,
                 "label": sample.label,
                 "role": sample.role,
+                "train_label": None if label_value < 0 else int(label_value),
+                "training_class": None if label_value < 0 else config.class_names[label_value],
                 "n_files": len(sample.files),
                 "skipped_files_missing_tree": skipped_files_missing_tree,
                 "n_events": total_events,
@@ -312,7 +352,16 @@ def prepare_event_bdt_inputs(config: EventBdtConfig, force: bool = False) -> Pat
     for name, chunks in buffers.items():
         concatenated[name] = np.concatenate(chunks) if chunks else np.array([], dtype=np.float64)
     for name, chunks in extra_buffers.items():
-        concatenated[name] = np.concatenate(chunks) if chunks else np.array([])
+        if chunks:
+            concatenated[name] = np.concatenate(chunks)
+        elif name in {"process", "label_text", "role", "dataset_name", "sample_name"}:
+            concatenated[name] = np.array([], dtype=str)
+        elif name == "train_label":
+            concatenated[name] = np.array([], dtype=np.int16)
+        elif name == "fold_id":
+            concatenated[name] = np.array([], dtype=np.int16)
+        else:
+            concatenated[name] = np.array([], dtype=np.float64)
 
     metadata = {
         "config_path": str(config.config_path),
@@ -324,6 +373,11 @@ def prepare_event_bdt_inputs(config: EventBdtConfig, force: bool = False) -> Pat
         "spectators": list(config.spectators),
         "weight_branch": config.weight_branch,
         "k_folds": config.k_folds,
+        "training_mode": config.training_mode,
+        "class_names": list(config.class_names),
+        "class_labels": list(config.class_labels),
+        "class_groups": list(config.class_groups),
+        "training_classes": config.training_class_payload,
         "signal_processes": list(config.signal_processes),
         "background_processes": list(config.background_processes),
         "eval_processes_extra": list(config.eval_processes_extra),

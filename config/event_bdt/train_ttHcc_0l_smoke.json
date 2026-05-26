@@ -1,7 +1,7 @@
 {
   "samples_config": "samples_2024_0l_v1.json",
   "study": {
-    "outdir": "outputs/event_bdt_ttHcc_0l_baseline",
+    "outdir": "outputs/event_bdt_ttHcc_0l_smoke",
     "tree_name": "Events",
     "base_selection": "(ntargetfatjet >= 1) & (TargetFatJet_pt >= 300) & (np.abs(TargetFatJet_eta) <= 2.4)",
     "selection_branches": [
@@ -74,10 +74,11 @@
     "eval_processes_extra": [
       "ttH_nonbb"
     ],
-    "k_folds": 10,
+    "k_folds": 5,
     "random_seed": 42,
+    "max_files_per_sample": 5,
     "uproot_step_size": "200 MB",
-    "model_name": "xgb_ttHcc_0l_baseline",
+    "model_name": "xgb_ttHcc_0l_smoke",
     "prepared_inputs": "prepared_inputs.npz",
     "predictions": "predictions.npz",
     "summary": "training_summary.json",
@@ -103,52 +104,15 @@
     "variables": [
       {
         "name": "TargetFatJet_pt",
-        "bins": [
-          200,
-          250,
-          300,
-          350,
-          400,
-          450,
-          500,
-          600,
-          700,
-          800,
-          1000
-        ]
+        "bins": [200, 250, 300, 350, 400, 450, 500, 600, 700, 800, 1000]
       },
       {
         "name": "HT",
-        "bins": [
-          400,
-          500,
-          600,
-          700,
-          800,
-          900,
-          1000,
-          1200,
-          1400,
-          1700,
-          2000,
-          2500
-        ]
+        "bins": [400, 500, 600, 700, 800, 900, 1000, 1200, 1400, 1700, 2000, 2500]
       },
       {
         "name": "CleanedHT",
-        "bins": [
-          200,
-          300,
-          400,
-          500,
-          600,
-          800,
-          1000,
-          1300,
-          1700,
-          2200,
-          3000
-        ]
+        "bins": [200, 300, 400, 500, 600, 800, 1000, 1300, 1700, 2200, 3000]
       }
     ]
   },
@@ -165,7 +129,7 @@
     "subsample": 0.8,
     "colsample_bytree": 0.8,
     "min_child_weight": 1.0,
-    "num_boost_round": 600,
-    "early_stopping_rounds": 30
+    "num_boost_round": 80,
+    "early_stopping_rounds": 10
   }
 }

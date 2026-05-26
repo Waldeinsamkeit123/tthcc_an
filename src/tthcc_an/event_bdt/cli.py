@@ -9,8 +9,10 @@ from tthcc_an.event_bdt.config import EventBdtConfig, load_event_bdt_config
 from tthcc_an.event_bdt.dataset import prepare_event_bdt_inputs
 from tthcc_an.event_bdt.plotting import (
     plot_class_score_shapes,
+    plot_ovr_roc_curves,
     plot_process_score_shapes,
     plot_roc_curve,
+    plot_training_class_score_shapes,
 )
 from tthcc_an.event_bdt.prediction import (
     PREDICTION_MODE_CHOICES,
@@ -21,9 +23,26 @@ from tthcc_an.event_bdt.training import load_predictions_payload, train_event_bd
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
+PROCESS_DISPLAY_LABELS = {
+    "ttHcc": "ttH(H->cc)",
+    "ttHbb": "ttH(H->bb)",
+    "ttH_nonbb": "ttH(non-bb)",
+    "ttbar": "ttbar",
+    "ttbb": "tt+bb",
+    "ttll": "tt+ll",
+    "ttv": "ttV",
+    "single_top": "single top",
+    "wjets": "W+jets",
+    "zjets": "Z+jets",
+    "qcd": "QCD",
+    "signal": "Signal (ttHbb/cc)",
+    "background": "Background",
+}
+
 
 def _load_config(config_path: str) -> EventBdtConfig:
     return load_event_bdt_config(config_path, REPO_ROOT)
+
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -95,15 +114,115 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+
+def _process_order(processes: np.ndarray) -> list[str]:
+    unique_processes = list(dict.fromkeys(processes.tolist()))
+    preferred_order = [
+        "ttHcc",
+        "ttHbb",
+        "ttH_nonbb",
+        "ttbar",
+        "ttbb",
+        "ttll",
+        "ttv",
+        "single_top",
+        "wjets",
+        "zjets",
+        "qcd",
+    ]
+    process_order = [process for process in preferred_order if process in unique_processes]
+    for process in unique_processes:
+        if process not in process_order:
+            process_order.append(process)
+    return process_order
+
+
+
+def _filled_string_array(value: str, size: int) -> np.ndarray:
+    width = max(1, len(value))
+    return np.full(size, value, dtype=f"<U{width}")
+
+
+
+def _process_label_map(processes: np.ndarray, label_texts: np.ndarray) -> dict[str, str]:
+    process_labels: dict[str, str] = {}
+    for process in list(dict.fromkeys(processes.tolist())):
+        mask = processes == process
+        if not np.any(mask):
+            continue
+        fallback = str(label_texts[mask][0])
+        process_labels[process] = PROCESS_DISPLAY_LABELS.get(process, fallback)
+    return process_labels
+
+
+
 def _evaluate_outputs(config: EventBdtConfig) -> dict[str, float]:
     arrays, metadata = load_predictions_payload(config.predictions_path)
+    training_mode = str(metadata.get("training_mode", config.training_mode))
     labels = arrays["train_label"].astype(int)
     weights = arrays["train_weight"].astype(float)
-    scores = arrays["bdt_score"].astype(float)
     processes = arrays["process"].astype(str)
     label_texts = arrays["label_text"].astype(str)
 
     trainable_mask = labels >= 0
+    process_labels = _process_label_map(processes, label_texts)
+    process_order = _process_order(processes)
+
+    if training_mode == "multiclass":
+        class_names = list(metadata["class_names"])
+        class_labels = {
+            name: label
+            for name, label in zip(class_names, metadata.get("class_labels", class_names), strict=False)
+        }
+        score_by_class = {
+            class_name: arrays[f"bdt_score_{class_name}"].astype(float)
+            for class_name in class_names
+        }
+        weighted_auc_ovr = {
+            name: float(value)
+            for name, value in metadata["weighted_auc_ovr"].items()
+        }
+        weighted_macro_auc = float(metadata["weighted_macro_auc"])
+
+        plot_ovr_roc_curves(
+            config.plot_dir_path / "roc_ovr.png",
+            score_by_class={
+                class_name: score_by_class[class_name][trainable_mask]
+                for class_name in class_names
+            },
+            labels=labels[trainable_mask],
+            weights=weights[trainable_mask],
+            class_names=class_names,
+            class_labels=class_labels,
+            auc_by_class=weighted_auc_ovr,
+            macro_auc=weighted_macro_auc,
+        )
+
+        for class_name in class_names:
+            score_label = class_labels.get(class_name, class_name)
+            plot_training_class_score_shapes(
+                config.plot_dir_path / f"score_by_training_class__{class_name}.png",
+                score_name=class_name,
+                score_label=score_label,
+                scores=score_by_class[class_name][trainable_mask],
+                labels=labels[trainable_mask],
+                weights=weights[trainable_mask],
+                class_names=class_names,
+                class_labels=class_labels,
+            )
+            plot_process_score_shapes(
+                config.plot_dir_path / f"score_by_process__{class_name}.png",
+                scores=score_by_class[class_name],
+                weights=weights,
+                processes=processes,
+                process_order=process_order,
+                process_labels=process_labels,
+                x_label=f"{score_label} score",
+            )
+
+        return {"weighted_macro_auc": weighted_macro_auc}
+
+    scores = arrays["bdt_score"].astype(float)
     roc_out = config.plot_dir_path / "roc_oof.png"
     plot_roc_curve(
         roc_out,
@@ -119,31 +238,6 @@ def _evaluate_outputs(config: EventBdtConfig) -> dict[str, float]:
         weights=weights[trainable_mask],
     )
 
-    unique_processes = list(dict.fromkeys(processes.tolist()))
-    process_labels: dict[str, str] = {}
-    for process in unique_processes:
-        mask = processes == process
-        if np.any(mask):
-            process_labels[process] = str(label_texts[mask][0])
-
-    preferred_order = [
-        "ttHcc",
-        "ttHbb",
-        "ttH_nonbb",
-        "ttbar",
-        "ttbb",
-        "single_top",
-        "ttv",
-        "ttll",
-        "wjets",
-        "zjets",
-        "qcd",
-    ]
-    process_order = [process for process in preferred_order if process in unique_processes]
-    for process in unique_processes:
-        if process not in process_order:
-            process_order.append(process)
-
     plot_process_score_shapes(
         config.plot_dir_path / "score_by_process.png",
         scores=scores,
@@ -156,20 +250,20 @@ def _evaluate_outputs(config: EventBdtConfig) -> dict[str, float]:
     tth_family_order = [
         process
         for process in ["ttHcc", "ttHbb", "ttH_nonbb"]
-        if process in unique_processes
+        if process in process_order
     ]
     background_mask = labels == 0
     if np.any(background_mask):
         pieces_scores = [scores[processes == process] for process in tth_family_order]
         pieces_weights = [weights[processes == process] for process in tth_family_order]
         pieces_processes = [
-            np.full(int(np.sum(processes == process)), process, dtype=np.str_)
+            _filled_string_array(process, int(np.sum(processes == process)))
             for process in tth_family_order
         ]
         pieces_scores.append(scores[background_mask])
         pieces_weights.append(weights[background_mask])
         pieces_processes.append(
-            np.full(int(np.sum(background_mask)), "background", dtype=np.str_)
+            _filled_string_array("background", int(np.sum(background_mask)))
         )
         family_labels = dict(process_labels)
         family_labels["background"] = "Background (combined)"
@@ -183,6 +277,14 @@ def _evaluate_outputs(config: EventBdtConfig) -> dict[str, float]:
         )
 
     return {"weighted_auc": float(metadata["weighted_auc"])}
+
+
+
+def _metric_line(summary: dict[str, float]) -> str:
+    if "weighted_macro_auc" in summary:
+        return f"Weighted macro AUC: {summary['weighted_macro_auc']:.4f}"
+    return f"Weighted AUC: {summary['weighted_auc']:.4f}"
+
 
 
 def main() -> None:
@@ -204,14 +306,14 @@ def main() -> None:
         )
         print("Event-BDT training finished.")
         print(f"Output directory: {config.outdir}")
-        print(f"Weighted AUC: {summary['weighted_auc']:.4f}")
+        print(_metric_line(summary))
         return
 
     if args.command == "evaluate":
         summary = _evaluate_outputs(config)
         print("Event-BDT evaluation plots finished.")
         print(f"Plot directory: {config.plot_dir_path}")
-        print(f"Weighted AUC: {summary['weighted_auc']:.4f}")
+        print(_metric_line(summary))
         return
 
     if args.command == "predict":
