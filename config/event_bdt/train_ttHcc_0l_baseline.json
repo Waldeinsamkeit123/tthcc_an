@@ -3,18 +3,30 @@
   "study": {
     "outdir": "outputs/event_bdt_ttHcc_0l_baseline",
     "tree_name": "Events",
-    "base_selection": "(ntargetfatjet >= 1)",
+    "base_selection": "(ntargetfatjet >= 1) & (TargetFatJet_pt >= 300) & (np.abs(TargetFatJet_eta) <= 2.4)",
     "selection_branches": [
-      "ntargetfatjet"
+      "MET_pt",
+      "ncleanedjet",
+      "ntargetfatjet",
+      "TargetFatJet_pt",
+      "TargetFatJet_eta"
     ],
     "features": [
       "MET_pt",
       "HT",
       "CleanedHT",
+      "Cleaned_HTb",
+      "Cleaned_HTc",
+      "Cleaned_HTcb",
+      "CleanedJet_nbtag",
+      "CleanedJet_nctag",
       "ncleanedjet",
-      "CleanedJet_pt",
       "TargetFatJet_pt",
+      "TargetFatJet_bbtagged",
+      "TargetFatJet_cctagged",
       "minDR_b",
+      "mass_minDR_b",
+      "maxMass_b",
       "DR_Tarb1",
       "DR_Tarb2",
       "minDR_TarClean"
@@ -27,9 +39,23 @@
       "weight"
     ],
     "weight_branch": "weight",
-    "signal_processes": ["ttHcc", "ttHbb"],
-    "background_processes": ["ttbar", "ttbb", "ttv", "ttll", "single_top", "wjets", "zjets", "qcd"],
-    "eval_processes_extra": ["ttH_nonbb"],
+    "signal_processes": [
+      "ttHcc",
+      "ttHbb"
+    ],
+    "background_processes": [
+      "ttbar",
+      "ttbb",
+      "ttv",
+      "ttll",
+      "single_top",
+      "wjets",
+      "zjets",
+      "qcd"
+    ],
+    "eval_processes_extra": [
+      "ttH_nonbb"
+    ],
     "k_folds": 10,
     "random_seed": 42,
     "uproot_step_size": "200 MB",
@@ -46,7 +72,12 @@
       "TargetFatJet_mass",
       "TargetFatJet_msoftdrop",
       "TargetFatJet_HiggsVsQCD",
-      "TargetFatJet_BBvsCC"
+      "TargetFatJet_BBvsCC",
+      "CleanedJet_pt",
+      "CleanedJet_btagged",
+      "CleanedJet_ctagged",
+      "TargetFatJet_bbtagged",
+      "TargetFatJet_cctagged"
     ]
   },
   "reweighting": {
@@ -54,22 +85,62 @@
     "variables": [
       {
         "name": "TargetFatJet_pt",
-        "bins": [200, 250, 300, 350, 400, 450, 500, 600, 700, 800, 1000]
+        "bins": [
+          200,
+          250,
+          300,
+          350,
+          400,
+          450,
+          500,
+          600,
+          700,
+          800,
+          1000
+        ]
       },
       {
         "name": "HT",
-        "bins": [400, 500, 600, 700, 800, 900, 1000, 1200, 1400, 1700, 2000, 2500]
+        "bins": [
+          400,
+          500,
+          600,
+          700,
+          800,
+          900,
+          1000,
+          1200,
+          1400,
+          1700,
+          2000,
+          2500
+        ]
       },
       {
-        "name": "CleanedJet_pt",
-        "bins": [30, 50, 70, 100, 150, 200, 300, 400, 500, 700, 1000]
+        "name": "CleanedHT",
+        "bins": [
+          200,
+          300,
+          400,
+          500,
+          600,
+          800,
+          1000,
+          1300,
+          1700,
+          2200,
+          3000
+        ]
       }
     ]
   },
   "xgboost": {
     "tree_method": "hist",
     "objective": "binary:logistic",
-    "eval_metric": ["auc", "logloss"],
+    "eval_metric": [
+      "auc",
+      "logloss"
+    ],
     "eta": 0.05,
     "max_depth": 4,
     "subsample": 0.8,
