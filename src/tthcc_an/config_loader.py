@@ -68,28 +68,36 @@ class StudyConfig:
     plot_defaults: dict[str, Any]
 
 
-def strip_hash_comments(text: str) -> str:
+def strip_json_line_comments(text: str) -> str:
     cleaned_lines: list[str] = []
     for line in text.splitlines():
         in_string = False
         escaped = False
         out_chars: list[str] = []
-        for char in line:
+        index = 0
+        while index < len(line):
+            char = line[index]
             if escaped:
                 out_chars.append(char)
                 escaped = False
+                index += 1
                 continue
             if char == "\\":
                 out_chars.append(char)
                 escaped = True
+                index += 1
                 continue
             if char == '"':
                 out_chars.append(char)
                 in_string = not in_string
+                index += 1
                 continue
-            if char == "#" and not in_string:
+            if not in_string and char == "#":
+                break
+            if not in_string and char == "/" and index + 1 < len(line) and line[index + 1] == "/":
                 break
             out_chars.append(char)
+            index += 1
         cleaned_lines.append("".join(out_chars))
     return "\n".join(cleaned_lines)
 
@@ -98,7 +106,7 @@ def load_json_maybe_with_comments(path: str | Path | None) -> dict[str, Any]:
     if path is None:
         return {}
     resolved_path = Path(path)
-    return json.loads(strip_hash_comments(resolved_path.read_text(encoding="utf-8")))
+    return json.loads(strip_json_line_comments(resolved_path.read_text(encoding="utf-8")))
 
 
 def expand_file_patterns(patterns: list[str]) -> list[str]:

@@ -396,9 +396,12 @@ def predict_event_bdt_to_root(
 
     ensemble = load_trained_ensemble(config)
     sample_config_to_use = samples_config_path or config.samples_config_path
+    sample_file_limit = max_files_per_sample
+    if sample_file_limit is None:
+        sample_file_limit = config.max_files_per_sample
     samples_config = load_event_bdt_samples_config(
         sample_config_to_use,
-        max_files_per_sample=max_files_per_sample,
+        max_files_per_sample=sample_file_limit,
     )
     output_root = _resolve_prediction_outdir(config, outdir)
     output_root.mkdir(parents=True, exist_ok=True)

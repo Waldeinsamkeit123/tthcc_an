@@ -22,6 +22,25 @@ DEFAULT_PLOT_DIR_NAME = "plots"
 DEFAULT_MODEL_NAME = "xgb_event_bdt"
 DEFAULT_NUM_BOOST_ROUND = 500
 DEFAULT_EARLY_STOPPING_ROUNDS = 30
+DEFAULT_XGBOOST_COMMON_PARAMS = {
+    "tree_method": "hist",
+    "eta": 0.05,
+    "max_depth": 4,
+    "subsample": 0.8,
+    "colsample_bytree": 0.8,
+}
+DEFAULT_BINARY_XGBOOST_PARAMS = {
+    **DEFAULT_XGBOOST_COMMON_PARAMS,
+    "objective": "binary:logistic",
+    "eval_metric": ["auc", "logloss"],
+}
+DEFAULT_MULTICLASS_XGBOOST_PARAMS = {
+    **DEFAULT_XGBOOST_COMMON_PARAMS,
+    "objective": "multi:softprob",
+    "eval_metric": ["mlogloss", "merror"],
+}
+BINARY_MODE = "binary"
+MULTICLASS_MODE = "multiclass"
 TRAINING_GROUP_SIGNAL = "signal"
 TRAINING_GROUP_BACKGROUND = "background"
 TRAINING_GROUP_CHOICES = {
@@ -221,7 +240,7 @@ def _normalize_training_classes(
                 "'study.signal_processes' and 'study.background_processes'."
             )
         return (
-            "binary",
+            BINARY_MODE,
             [
                 EventBdtTrainingClass(
                     name="signal",
@@ -297,8 +316,45 @@ def _normalize_training_classes(
     if len(training_classes) <= 1:
         raise ValueError("At least two training classes are required.")
 
-    training_mode = "binary" if len(training_classes) == 2 else "multiclass"
+    training_mode = BINARY_MODE if len(training_classes) == 2 else MULTICLASS_MODE
     return training_mode, training_classes
+
+
+
+def _build_default_xgboost_params(
+    training_mode: str,
+    num_training_classes: int,
+) -> dict[str, Any]:
+    if training_mode == MULTICLASS_MODE:
+        params = dict(DEFAULT_MULTICLASS_XGBOOST_PARAMS)
+        params["num_class"] = num_training_classes
+        return params
+    return dict(DEFAULT_BINARY_XGBOOST_PARAMS)
+
+
+
+def _normalize_xgboost_params(
+    raw_xgboost_payload: dict[str, Any],
+    training_mode: str,
+    num_training_classes: int,
+) -> dict[str, Any]:
+    xgboost_payload = _build_default_xgboost_params(
+        training_mode=training_mode,
+        num_training_classes=num_training_classes,
+    )
+    configured_num_class = raw_xgboost_payload.get("num_class")
+    if training_mode == MULTICLASS_MODE:
+        if configured_num_class is not None and int(configured_num_class) != num_training_classes:
+            raise ValueError(
+                "Configured xgboost.num_class does not match the number of training classes: "
+                f"{configured_num_class} vs {num_training_classes}."
+            )
+    else:
+        raw_xgboost_payload.pop("num_class", None)
+    xgboost_payload.update(raw_xgboost_payload)
+    if training_mode == MULTICLASS_MODE:
+        xgboost_payload["num_class"] = num_training_classes
+    return xgboost_payload
 
 
 
@@ -370,25 +426,21 @@ def load_event_bdt_config(path: str | Path, repo_root: str | Path) -> EventBdtCo
             if branch.startswith("TargetFatJet_")
         ]
 
-    xgboost_payload = {
-        "tree_method": "hist",
-        "objective": "binary:logistic",
-        "eval_metric": ["auc", "logloss"],
-        "eta": 0.05,
-        "max_depth": 4,
-        "subsample": 0.8,
-        "colsample_bytree": 0.8,
-    }
-    xgboost_payload.update(dict(payload.get("xgboost", {})))
-    num_boost_round = int(xgboost_payload.pop("num_boost_round", DEFAULT_NUM_BOOST_ROUND))
-    early_stopping_rounds = int(
-        xgboost_payload.pop("early_stopping_rounds", DEFAULT_EARLY_STOPPING_ROUNDS)
-    )
-
     eval_processes_extra = [str(item) for item in study.get("eval_processes_extra", [])]
     training_mode, training_classes = _normalize_training_classes(
         study,
         eval_processes_extra=eval_processes_extra,
+    )
+
+    raw_xgboost_payload = dict(payload.get("xgboost", {}))
+    num_boost_round = int(raw_xgboost_payload.pop("num_boost_round", DEFAULT_NUM_BOOST_ROUND))
+    early_stopping_rounds = int(
+        raw_xgboost_payload.pop("early_stopping_rounds", DEFAULT_EARLY_STOPPING_ROUNDS)
+    )
+    xgboost_payload = _normalize_xgboost_params(
+        raw_xgboost_payload=raw_xgboost_payload,
+        training_mode=training_mode,
+        num_training_classes=len(training_classes),
     )
 
     return EventBdtConfig(

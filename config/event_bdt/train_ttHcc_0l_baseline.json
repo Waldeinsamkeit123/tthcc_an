@@ -44,31 +44,46 @@
         "name": "ttHcc",
         "label": "ttH(H->cc)",
         "group": "signal",
-        "processes": ["ttHcc"]
+        "processes": [
+          "ttHcc"
+        ]
       },
       {
         "name": "ttHbb",
         "label": "ttH(H->bb)",
         "group": "signal",
-        "processes": ["ttHbb"]
+        "processes": [
+          "ttHbb"
+        ]
       },
       {
         "name": "ttbar",
         "label": "ttbar / tt+bb / tt+ll",
         "group": "background",
-        "processes": ["ttbar", "ttbb", "ttll"]
+        "processes": [
+          "ttbar",
+          "ttbb",
+          "ttll"
+        ]
       },
       {
         "name": "qcd",
         "label": "QCD",
         "group": "background",
-        "processes": ["qcd"]
+        "processes": [
+          "qcd"
+        ]
       },
       {
         "name": "others",
         "label": "Others",
         "group": "background",
-        "processes": ["ttv", "single_top", "wjets", "zjets"]
+        "processes": [
+          "ttv",
+          "single_top",
+          "wjets",
+          "zjets"
+        ]
       }
     ],
     "eval_processes_extra": [
@@ -154,12 +169,6 @@
   },
   "xgboost": {
     "tree_method": "hist",
-    "objective": "multi:softprob",
-    "num_class": 5,
-    "eval_metric": [
-      "mlogloss",
-      "merror"
-    ],
     "eta": 0.05,
     "max_depth": 4,
     "subsample": 0.8,
