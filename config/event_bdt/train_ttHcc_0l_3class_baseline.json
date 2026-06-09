@@ -25,11 +25,14 @@
       "TargetFatJet_bbtagged",
       "TargetFatJet_cctagged",
       "minDR_b",
-      "mass_minDR_b",
-      "maxMass_b",
       "DR_Tarb1",
       "DR_Tarb2",
       "minDR_TarClean"
+    ],
+    "analysis_branches": [
+      "TargetFatJet_mass",
+      "TargetFatJet_msoftdrop",
+      "CleanedJet_mass"
     ],
     "spectators": [
       "event",
@@ -89,6 +92,7 @@
       "TargetFatJet_HiggsVsQCD",
       "TargetFatJet_BBvsCC",
       "CleanedJet_pt",
+      "CleanedJet_mass",
       "CleanedJet_btagged",
       "CleanedJet_ctagged",
       "TargetFatJet_bbtagged",

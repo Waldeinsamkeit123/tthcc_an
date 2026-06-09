@@ -426,10 +426,18 @@ For a standard multiclass event-BDT training run, the output directory contains:
 - `predictions.npz`
 - `training_summary.json`
 - `feature_importance.json`
+- `mass_correlation_summary.json` when `study.analysis_branches` is configured and the corresponding branches are present in `prepared_inputs.npz`
 - `models/*.json`
 - `plots/roc_ovr.png`
 - `plots/score_by_training_class__<class>.png` for each configured training class
+- `plots/score_by_training_class_weighted_events__<class>.png` for each configured training class
+- `plots/score_by_training_class_weighted_events__<class>_logy.png` for each configured training class
 - `plots/score_by_process__<class>.png` for each configured training class
+- `plots/score_by_process_weighted_events__<class>.png` for each configured training class
+- `plots/score_by_process_weighted_events__<class>_logy.png` for each configured training class
+- `plots/feature_mass_correlation__<process>.png` for each process in the prepared/prediction payload when `study.analysis_branches` is configured
+- `plots/score_vs_mass__<process>.png` for each process in the prepared/prediction payload when `study.analysis_branches` is configured
+- `qcd_score_threshold_scan.txt` and `qcd_score_threshold_scan.json` when the multiclass config contains a `qcd` training class
 
 Legacy binary configs still produce the old `roc_oof.png`, `score_signal_vs_background.png`, `score_by_process.png`, and `score_tth_family.png` outputs.
 
@@ -443,6 +451,11 @@ The `predict` step is separate from `train` and `evaluate`:
 - `train` prepares inputs, trains models, and writes summaries
 - `evaluate` redraws plots from saved predictions
 - `predict` rewrites ROOT files with appended score branches
+
+The mass-correlation diagnostics in `evaluate` use both `prepared_inputs.npz` and `predictions.npz`:
+
+- if you only want raw feature-vs-mass correlations, rebuilding the prepared cache is enough
+- if you want the updated BDT score vs mass diagnostics after changing `study.features`, you must retrain so that `predictions.npz` matches the new model
 
 Each scored ROOT file keeps the full original `Events` tree and appends one or
 more BDT score branches:
@@ -881,4 +894,3 @@ python scripts/run_trigger_efficiency.py \
   --max-files-per-sample 1 \
   --outdir outputs/trigger_efficiency_signal_2024_hlt_v1_smoke
 ```
-

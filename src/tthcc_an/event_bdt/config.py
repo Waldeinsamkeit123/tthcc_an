@@ -93,6 +93,7 @@ class EventBdtConfig:
     base_selection: str
     selection_branches: list[str]
     features: list[str]
+    analysis_branches: list[str]
     spectators: list[str]
     weight_branch: str
     k_folds: int
@@ -117,6 +118,7 @@ class EventBdtConfig:
 
     def requested_branches(self) -> list[str]:
         requested = set(self.features)
+        requested.update(self.analysis_branches)
         requested.update(self.spectators)
         requested.update(self.selection_branches)
         if self.weight_branch:
@@ -413,6 +415,7 @@ def load_event_bdt_config(path: str | Path, repo_root: str | Path) -> EventBdtCo
     features = list(study.get("features", []))
     if not features:
         raise ValueError("Config field 'study.features' must be a non-empty list.")
+    analysis_branches = list(study.get("analysis_branches", []))
     spectators = list(study.get("spectators", []))
     selection_branches = list(study.get("selection_branches", []))
     if not selection_branches:
@@ -422,7 +425,7 @@ def load_event_bdt_config(path: str | Path, repo_root: str | Path) -> EventBdtCo
     if not flatten_first_branches:
         flatten_first_branches = [
             branch
-            for branch in set(features) | set(spectators) | set(selection_branches)
+            for branch in set(features) | set(analysis_branches) | set(spectators) | set(selection_branches)
             if branch.startswith("TargetFatJet_")
         ]
 
@@ -452,6 +455,7 @@ def load_event_bdt_config(path: str | Path, repo_root: str | Path) -> EventBdtCo
         base_selection=str(study.get("base_selection", "")).strip(),
         selection_branches=selection_branches,
         features=features,
+        analysis_branches=analysis_branches,
         spectators=spectators,
         weight_branch=str(study.get("weight_branch", DEFAULT_WEIGHT_BRANCH)),
         k_folds=int(study.get("k_folds", DEFAULT_K_FOLDS)),

@@ -273,7 +273,7 @@ XBB_VS_XCC_REGION_PRESETS = {
     },
     "tight": {
         "label": "tight",
-        "description": "QCD mistag eff = 0.1% / 0.5%",
+        "description": "QCD mistag eff = 0.1% / 0.4%",
         "hcc_x_cut": 0.9467,
         "hbb_x_cut": 0.9467,
         "fixed_x_cut": 0.9467,
