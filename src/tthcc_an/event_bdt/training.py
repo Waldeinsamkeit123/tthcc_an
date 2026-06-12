@@ -8,6 +8,7 @@ import numpy as np
 
 from tthcc_an.event_bdt.config import EventBdtConfig
 from tthcc_an.event_bdt.dataset import load_npz_payload, prepare_event_bdt_inputs
+from tthcc_an.event_bdt.features import build_feature_matrix, clean_feature_values
 from tthcc_an.event_bdt.reweighting import build_reweighted_training_weights
 
 
@@ -121,6 +122,37 @@ def _weighted_average_or_nan(values: np.ndarray, weights: np.ndarray) -> float:
 
 
 
+def _class_weight_sums(
+    labels: np.ndarray,
+    weights: np.ndarray,
+    mask: np.ndarray,
+    class_names: list[str],
+) -> dict[str, float]:
+    return {
+        class_name: float(np.sum(weights[mask & (labels == class_index)]))
+        for class_index, class_name in enumerate(class_names)
+    }
+
+
+def _configured_early_stopping_metric(xgboost_params: dict[str, Any]) -> str | None:
+    eval_metric = xgboost_params.get("eval_metric")
+    if isinstance(eval_metric, (list, tuple)):
+        return str(eval_metric[-1]) if eval_metric else None
+    if eval_metric is None:
+        return None
+    return str(eval_metric)
+
+
+def _build_early_stopping_callback(xgb: Any, config: EventBdtConfig):
+    return xgb.callback.EarlyStopping(
+        rounds=config.early_stopping_rounds,
+        metric_name=_configured_early_stopping_metric(config.xgboost_params),
+        data_name="eval_balanced",
+        save_best=False,
+        min_delta=config.early_stopping_min_delta,
+    )
+
+
 def _binary_labels_from_groups(labels: np.ndarray, class_groups: list[str]) -> np.ndarray:
     signal_indices = np.array(
         [index for index, group in enumerate(class_groups) if group == "signal"],
@@ -173,7 +205,7 @@ def train_event_bdt(
             "Rebuild the prepared cache with --force-prepare."
         )
 
-    X = np.column_stack([np.asarray(arrays[name], dtype=np.float64) for name in feature_names])
+    X = build_feature_matrix(arrays, feature_names)
     raw_labels = np.asarray(arrays["train_label"], dtype=np.int16)
     base_weights = np.asarray(arrays["train_weight"], dtype=np.float64)
     fold_id = np.asarray(arrays["fold_id"], dtype=np.int16)
@@ -234,7 +266,10 @@ def train_event_bdt(
     importance_totals: dict[str, float] = {name: 0.0 for name in feature_names}
 
     full_matrix = xgb.DMatrix(X, feature_names=feature_names, missing=np.nan)
-    column_view = {name: np.asarray(arrays[name], dtype=np.float64) for name in feature_names}
+    column_view = {
+        name: clean_feature_values(name, np.asarray(arrays[name], dtype=np.float64))
+        for name in feature_names
+    }
 
     for fold in range(config.k_folds):
         fold_train_mask = trainable_mask & (fold_id != fold)
@@ -258,6 +293,14 @@ def train_event_bdt(
             reweighting_config=config.reweighting,
             class_groups=class_groups,
         )
+        validation_balanced_weights, validation_reweighting_summary = build_reweighted_training_weights(
+            base_weights=base_weights,
+            labels=raw_labels,
+            train_mask=fold_val_mask,
+            columns=column_view,
+            reweighting_config=config.reweighting,
+            class_groups=class_groups,
+        )
 
         dtrain = xgb.DMatrix(
             X[fold_train_mask],
@@ -266,10 +309,17 @@ def train_event_bdt(
             feature_names=feature_names,
             missing=np.nan,
         )
-        dval = xgb.DMatrix(
+        dval_physics = xgb.DMatrix(
             X[fold_val_mask],
             label=train_labels[fold_val_mask],
             weight=base_weights[fold_val_mask],
+            feature_names=feature_names,
+            missing=np.nan,
+        )
+        dval_balanced = xgb.DMatrix(
+            X[fold_val_mask],
+            label=train_labels[fold_val_mask],
+            weight=validation_balanced_weights[fold_val_mask],
             feature_names=feature_names,
             missing=np.nan,
         )
@@ -279,20 +329,25 @@ def train_event_bdt(
             params=dict(config.xgboost_params),
             dtrain=dtrain,
             num_boost_round=config.num_boost_round,
-            evals=[(dtrain, "train"), (dval, "eval")],
-            early_stopping_rounds=config.early_stopping_rounds,
+            evals=[
+                (dtrain, "train"),
+                (dval_physics, "eval_physics"),
+                (dval_balanced, "eval_balanced"),
+            ],
+            callbacks=[_build_early_stopping_callback(xgb, config)],
             evals_result=evals_result,
             verbose_eval=False,
         )
 
         best_iteration = int(getattr(booster, "best_iteration", config.num_boost_round - 1))
+        best_score = getattr(booster, "best_score", None)
         model_path = config.model_dir_path / f"{config.model_name}.fold{fold}.json"
         booster.save_model(model_path)
 
         if training_mode == MULTICLASS_MODE:
             n_val = int(np.sum(fold_val_mask))
             val_scores = _coerce_multiclass_scores(
-                booster.predict(dval, iteration_range=(0, best_iteration + 1)),
+                booster.predict(dval_physics, iteration_range=(0, best_iteration + 1)),
                 n_rows=n_val,
                 n_classes=len(class_names),
             )
@@ -303,7 +358,7 @@ def train_event_bdt(
                 n_classes=len(class_names),
             )
         else:
-            val_scores = booster.predict(dval, iteration_range=(0, best_iteration + 1))
+            val_scores = booster.predict(dval_physics, iteration_range=(0, best_iteration + 1))
             oof_scores[fold_val_mask] = np.asarray(val_scores, dtype=np.float64)
             full_prediction_sum += booster.predict(
                 full_matrix,
@@ -325,7 +380,24 @@ def train_event_bdt(
                 "n_train": int(np.sum(fold_train_mask)),
                 "n_val": int(np.sum(fold_val_mask)),
                 "best_iteration": best_iteration,
+                "best_score": float(best_score) if best_score is not None else None,
+                "early_stopping_dataset": "eval_balanced",
+                "early_stopping_metric": _configured_early_stopping_metric(config.xgboost_params),
+                "early_stopping_min_delta": config.early_stopping_min_delta,
+                "base_weight_sum_by_class": _class_weight_sums(
+                    train_labels, base_weights, fold_train_mask, class_names
+                ),
+                "reweighted_weight_sum_by_class": _class_weight_sums(
+                    train_labels, train_weights, fold_train_mask, class_names
+                ),
+                "validation_base_weight_sum_by_class": _class_weight_sums(
+                    train_labels, base_weights, fold_val_mask, class_names
+                ),
+                "validation_reweighted_weight_sum_by_class": _class_weight_sums(
+                    train_labels, validation_balanced_weights, fold_val_mask, class_names
+                ),
                 "reweighting": reweighting_summary,
+                "validation_reweighting": validation_reweighting_summary,
                 "evals_result": evals_result,
             }
         )
@@ -393,6 +465,7 @@ def train_event_bdt(
         "xgboost_params": dict(config.xgboost_params),
         "num_boost_round": config.num_boost_round,
         "early_stopping_rounds": config.early_stopping_rounds,
+        "early_stopping_min_delta": config.early_stopping_min_delta,
         "fold_summaries": fold_summaries,
         "process_summaries": process_summaries,
         "feature_importance": feature_importance,

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import re
 from typing import Any
 
 from tthcc_an.config_loader import expand_file_patterns, load_json_maybe_with_comments
@@ -22,6 +23,7 @@ DEFAULT_PLOT_DIR_NAME = "plots"
 DEFAULT_MODEL_NAME = "xgb_event_bdt"
 DEFAULT_NUM_BOOST_ROUND = 500
 DEFAULT_EARLY_STOPPING_ROUNDS = 30
+DEFAULT_EARLY_STOPPING_MIN_DELTA = 0.0
 DEFAULT_XGBOOST_COMMON_PARAMS = {
     "tree_method": "hist",
     "eta": 0.05,
@@ -37,7 +39,8 @@ DEFAULT_BINARY_XGBOOST_PARAMS = {
 DEFAULT_MULTICLASS_XGBOOST_PARAMS = {
     **DEFAULT_XGBOOST_COMMON_PARAMS,
     "objective": "multi:softprob",
-    "eval_metric": ["mlogloss", "merror"],
+    # XGBoost early stopping uses the last metric when multiple metrics are configured.
+    "eval_metric": ["merror", "mlogloss"],
 }
 BINARY_MODE = "binary"
 MULTICLASS_MODE = "multiclass"
@@ -47,6 +50,21 @@ TRAINING_GROUP_CHOICES = {
     TRAINING_GROUP_SIGNAL,
     TRAINING_GROUP_BACKGROUND,
 }
+INDEXED_FEATURE_ALIAS_PATTERN = re.compile(r"^(?P<branch>.+)__(?P<position>[1-9]\d*)$")
+
+
+def parse_indexed_feature_alias(name: str) -> tuple[str, int] | None:
+    match = INDEXED_FEATURE_ALIAS_PATTERN.match(name)
+    if match is None:
+        return None
+    branch = str(match.group("branch"))
+    position = int(match.group("position")) - 1
+    return branch, position
+
+
+def resolve_input_branch_name(name: str) -> str:
+    parsed = parse_indexed_feature_alias(name)
+    return parsed[0] if parsed is not None else name
 
 
 @dataclass
@@ -114,9 +132,10 @@ class EventBdtConfig:
     xgboost_params: dict[str, Any]
     num_boost_round: int
     early_stopping_rounds: int
+    early_stopping_min_delta: float
     reweighting: dict[str, Any]
 
-    def requested_branches(self) -> list[str]:
+    def requested_columns(self) -> list[str]:
         requested = set(self.features)
         requested.update(self.analysis_branches)
         requested.update(self.spectators)
@@ -124,6 +143,9 @@ class EventBdtConfig:
         if self.weight_branch:
             requested.add(self.weight_branch)
         return sorted(requested)
+
+    def requested_branches(self) -> list[str]:
+        return sorted({resolve_input_branch_name(name) for name in self.requested_columns()})
 
     @property
     def prepared_inputs_path(self) -> Path:
@@ -440,6 +462,12 @@ def load_event_bdt_config(path: str | Path, repo_root: str | Path) -> EventBdtCo
     early_stopping_rounds = int(
         raw_xgboost_payload.pop("early_stopping_rounds", DEFAULT_EARLY_STOPPING_ROUNDS)
     )
+    early_stopping_min_delta = float(
+        raw_xgboost_payload.pop(
+            "early_stopping_min_delta",
+            raw_xgboost_payload.pop("min_delta", DEFAULT_EARLY_STOPPING_MIN_DELTA),
+        )
+    )
     xgboost_payload = _normalize_xgboost_params(
         raw_xgboost_payload=raw_xgboost_payload,
         training_mode=training_mode,
@@ -478,5 +506,6 @@ def load_event_bdt_config(path: str | Path, repo_root: str | Path) -> EventBdtCo
         xgboost_params=xgboost_payload,
         num_boost_round=num_boost_round,
         early_stopping_rounds=early_stopping_rounds,
+        early_stopping_min_delta=early_stopping_min_delta,
         reweighting=dict(payload.get("reweighting", {})),
     )

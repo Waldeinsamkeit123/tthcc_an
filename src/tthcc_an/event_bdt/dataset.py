@@ -13,6 +13,8 @@ from tthcc_an.event_bdt.config import (
     EventBdtConfig,
     EventBdtSampleConfig,
     load_event_bdt_samples_config,
+    parse_indexed_feature_alias,
+    resolve_input_branch_name,
 )
 
 
@@ -104,11 +106,23 @@ def _flatten_singleton_branch(values: ak.Array) -> np.ndarray:
 
 
 
+def _flatten_indexed_branch(values: ak.Array, position: int) -> np.ndarray:
+    padded = ak.pad_none(values, position + 1, clip=False)
+    indexed = padded[:, position]
+    flattened = ak.fill_none(indexed, np.nan)
+    return np.asarray(ak.to_numpy(flattened), dtype=np.float64)
+
+
+
 def _extract_branch(
     name: str,
     values: ak.Array,
     flatten_first_branches: set[str],
 ) -> np.ndarray:
+    indexed_feature = parse_indexed_feature_alias(name)
+    if indexed_feature is not None:
+        _, position = indexed_feature
+        return _flatten_indexed_branch(values, position)
     if name in flatten_first_branches:
         return _flatten_singleton_branch(values)
     return np.asarray(ak.to_numpy(values))
@@ -197,12 +211,13 @@ def prepare_event_bdt_inputs(config: EventBdtConfig, force: bool = False) -> Pat
         samples_config.xsec_file,
     )
 
+    requested_columns = config.requested_columns()
     requested_branches = config.requested_branches()
     flatten_first_branches = set(config.flatten_first_branches)
     process_to_class_index = config.process_to_class_index
     eval_processes_extra = set(config.eval_processes_extra)
 
-    buffers: dict[str, list[np.ndarray]] = {name: [] for name in requested_branches}
+    buffers: dict[str, list[np.ndarray]] = {name: [] for name in requested_columns}
     extra_buffers: dict[str, list[np.ndarray]] = {
         "process": [],
         "label_text": [],
@@ -284,6 +299,20 @@ def prepare_event_bdt_inputs(config: EventBdtConfig, force: bool = False) -> Pat
                         else:
                             raise KeyError(f"Branch '{branch}' is missing in file: {file_path}")
 
+                    for column_name in requested_columns:
+                        if column_name in chunk_columns:
+                            continue
+                        source_branch = resolve_input_branch_name(column_name)
+                        if source_branch not in arrays.fields:
+                            raise KeyError(
+                                f"Source branch '{source_branch}' for column '{column_name}' is missing in file: {file_path}"
+                            )
+                        chunk_columns[column_name] = _extract_branch(
+                            column_name,
+                            arrays[source_branch],
+                            flatten_first_branches,
+                        )
+
                     mask = _selection_mask(config.base_selection, chunk_columns)
                     if not np.any(mask):
                         continue
@@ -302,8 +331,8 @@ def prepare_event_bdt_inputs(config: EventBdtConfig, force: bool = False) -> Pat
                     event = np.asarray(chunk_columns["event"][mask], dtype=np.int64)
                     fold_id = _compute_fold_ids(run, lumi, event, config.k_folds)
 
-                    for branch in requested_branches:
-                        buffers[branch].append(np.asarray(chunk_columns[branch][mask]))
+                    for column_name in requested_columns:
+                        buffers[column_name].append(np.asarray(chunk_columns[column_name][mask]))
 
                     extra_buffers["process"].append(_filled_string_array(sample.process, selected))
                     extra_buffers["label_text"].append(_filled_string_array(sample.label, selected))

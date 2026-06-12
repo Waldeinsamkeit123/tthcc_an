@@ -1,7 +1,7 @@
 {
   "samples_config": "samples_2024_0l_jecs_v1.json",
   "study": {
-    "outdir": "outputs/event_bdt_ttHcc_0l_3class_baseline_jecs",
+    "outdir": "outputs/event_bdt_ttHcc_0l_3class_baseline_jecs_v3",
     "tree_name": "Events",
     "base_selection": "(ntargetfatjet >= 1) & (TargetFatJet_pt >= 300) & (np.abs(TargetFatJet_eta) <= 2.4)",
     "selection_branches": [
@@ -21,13 +21,23 @@
       "CleanedJet_nbtag",
       "CleanedJet_nctag",
       "ncleanedjet",
+      "CleanedJet_pt__1",
+      "CleanedJet_pt__2",
+      "CleanedJet_pt__3",
+      "CleanedJet_pt__4",
+      "CleanedJet_tag__1",
+      "CleanedJet_tag__2",
+      "CleanedJet_tag__3",
+      "CleanedJet_tag__4",
       "TargetFatJet_pt",
       "TargetFatJet_bbtagged",
       "TargetFatJet_cctagged",
       "minDR_b",
       "DR_Tarb1",
       "DR_Tarb2",
-      "minDR_TarClean"
+      "minDR_TarClean",
+      "minDEta_TarClean",
+      "minDPhi_TarClean"
     ],
     "analysis_branches": [
       "TargetFatJet_mass",
@@ -74,7 +84,7 @@
     "eval_processes_extra": [
       "ttH_nonbb"
     ],
-    "k_folds": 10,
+    "k_folds": 5,
     "random_seed": 42,
     "uproot_step_size": "200 MB",
     "model_name": "xgb_ttHcc_0l_3class_baseline",
@@ -95,6 +105,7 @@
       "CleanedJet_mass",
       "CleanedJet_btagged",
       "CleanedJet_ctagged",
+      "CleanedJet_tag",
       "TargetFatJet_bbtagged",
       "TargetFatJet_cctagged"
     ]
@@ -155,12 +166,14 @@
   },
   "xgboost": {
     "tree_method": "hist",
+    "eval_metric": ["merror", "mlogloss"],
     "eta": 0.05,
     "max_depth": 4,
     "subsample": 0.8,
     "colsample_bytree": 0.8,
     "min_child_weight": 1.0,
     "num_boost_round": 600,
-    "early_stopping_rounds": 30
+    "early_stopping_rounds": 30,
+    "early_stopping_min_delta": 1e-4
   }
 }

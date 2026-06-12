@@ -9,8 +9,13 @@ import awkward as ak
 import numpy as np
 import uproot
 
-from tthcc_an.event_bdt.config import EventBdtConfig, load_event_bdt_samples_config
+from tthcc_an.event_bdt.config import (
+    EventBdtConfig,
+    load_event_bdt_samples_config,
+    resolve_input_branch_name,
+)
 from tthcc_an.event_bdt.dataset import _compute_fold_ids, _extract_branch, _selection_mask
+from tthcc_an.event_bdt.features import build_feature_matrix
 
 
 BINARY_MODE = "binary"
@@ -143,9 +148,7 @@ def _build_score_matrix(
     columns: dict[str, np.ndarray],
     feature_names: list[str],
 ) -> np.ndarray:
-    return np.column_stack(
-        [np.asarray(columns[name], dtype=np.float64) for name in feature_names]
-    )
+    return build_feature_matrix(columns, feature_names)
 
 
 
@@ -302,9 +305,10 @@ def _score_chunk(
     score_branch: str,
 ) -> dict[str, np.ndarray]:
     flatten_first_branches = set(config.flatten_first_branches)
-    required_branches = set(config.features)
-    required_branches.update(config.selection_branches)
-    required_branches.update({"run", "luminosityBlock", "event"})
+    required_columns = set(config.features)
+    required_columns.update(config.selection_branches)
+    required_columns.update({"run", "luminosityBlock", "event"})
+    required_branches = {resolve_input_branch_name(name) for name in required_columns}
 
     columns: dict[str, np.ndarray] = {}
     for branch in sorted(required_branches):
@@ -313,6 +317,19 @@ def _score_chunk(
         columns[branch] = _extract_branch(
             branch,
             chunk_arrays[branch],
+            flatten_first_branches,
+        )
+    for column_name in sorted(required_columns):
+        if column_name in columns:
+            continue
+        source_branch = resolve_input_branch_name(column_name)
+        if source_branch not in chunk_arrays:
+            raise KeyError(
+                f"Required source branch '{source_branch}' for column '{column_name}' is missing from prediction input."
+            )
+        columns[column_name] = _extract_branch(
+            column_name,
+            chunk_arrays[source_branch],
             flatten_first_branches,
         )
 

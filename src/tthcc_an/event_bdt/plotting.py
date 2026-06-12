@@ -163,6 +163,65 @@ def plot_roc_curve(
 
 
 
+def plot_training_metric_curves(
+    outpath: Path,
+    fold_summaries: list[dict[str, object]],
+    metric_name: str,
+) -> None:
+    _setup_style()
+    fig, ax = plt.subplots(figsize=(8.2, 6.2))
+    has_curve = False
+
+    for index, fold_summary in enumerate(fold_summaries):
+        evals_result = fold_summary.get("evals_result", {})
+        if not isinstance(evals_result, dict):
+            continue
+        fold_number = int(fold_summary.get("fold", index)) + 1
+        color = _class_color(index)
+        dataset_styles = {
+            "train": ("--", 0.82),
+            "eval_balanced": ("-", 0.90),
+            "eval_physics": (":", 0.90),
+            "eval": ("-", 0.90),
+        }
+        preferred_order = ["train", "eval_balanced", "eval_physics", "eval"]
+        dataset_order = [name for name in preferred_order if name in evals_result]
+        dataset_order.extend(name for name in evals_result if name not in dataset_order)
+        for dataset_name in dataset_order:
+            dataset_metrics = evals_result.get(dataset_name, {})
+            if not isinstance(dataset_metrics, dict) or metric_name not in dataset_metrics:
+                continue
+            values = np.asarray(dataset_metrics[metric_name], dtype=np.float64)
+            valid = np.isfinite(values)
+            if not np.any(valid):
+                continue
+            rounds = np.arange(1, values.size + 1, dtype=np.int32)
+            linestyle, alpha = dataset_styles.get(dataset_name, ("-.", 0.78))
+            ax.plot(
+                rounds[valid],
+                values[valid],
+                color=color,
+                linestyle=linestyle,
+                linewidth=1.2,
+                alpha=alpha,
+                label=f"fold {fold_number} {dataset_name}",
+            )
+            has_curve = True
+
+    ax.set_xlabel("Boosting round", fontsize=AXIS_LABEL_SIZE)
+    ax.set_ylabel(metric_name, fontsize=AXIS_LABEL_SIZE)
+    ax.set_title(f"Training curve: {metric_name}", fontsize=TITLE_SIZE)
+    ax.tick_params(labelsize=TICK_LABEL_SIZE)
+    ax.grid(alpha=0.25)
+    if has_curve:
+        ax.legend(frameon=False, loc="best", ncol=2, fontsize=max(7, LEGEND_FONT_SIZE - 1))
+    else:
+        ax.text(0.5, 0.5, "No metric history", ha="center", va="center", transform=ax.transAxes)
+    _cms_label(ax)
+    _save(fig, outpath)
+
+
+
 def plot_ovr_roc_curves(
     outpath: Path,
     score_by_class: dict[str, np.ndarray],

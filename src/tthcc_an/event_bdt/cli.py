@@ -19,6 +19,7 @@ from tthcc_an.event_bdt.plotting import (
     plot_score_vs_mass_grid,
     plot_training_class_score_shapes,
     plot_training_class_score_weighted_events,
+    plot_training_metric_curves,
 )
 from tthcc_an.event_bdt.prediction import (
     PREDICTION_MODE_CHOICES,
@@ -36,7 +37,8 @@ MASS_DIAGNOSTIC_VARIABLES = [
 ]
 MASS_DIAGNOSTIC_SCORE_NAMES = ["tth", "ttbar", "qcd"]
 MASS_RANGE_QUANTILES = (0.005, 0.995)
-QCD_SCORE_DROP_TARGETS = [0.70, 0.90, 0.95, 0.99, 0.995, 0.999]
+CLASS_SCORE_DROP_TARGETS = [0.70, *[value / 100.0 for value in range(90, 100)], 0.995, 0.999]
+QCD_SCORE_DROP_TARGETS = CLASS_SCORE_DROP_TARGETS
 
 PROCESS_DISPLAY_LABELS = {
     "ttHcc": "ttH(H->cc)",
@@ -215,13 +217,78 @@ def _format_weight(value: float) -> str:
 
 
 
+def _class_score_threshold_scan_paths(config: EventBdtConfig) -> tuple[Path, Path]:
+    base = config.outdir / "class_score_threshold_scan"
+    return base.with_suffix(".txt"), base.with_suffix(".json")
+
+
+
 def _qcd_score_threshold_scan_paths(config: EventBdtConfig) -> tuple[Path, Path]:
     base = config.outdir / "qcd_score_threshold_scan"
     return base.with_suffix(".txt"), base.with_suffix(".json")
 
 
 
-def _build_qcd_score_threshold_scan(
+def _event_bdt_score_branch(class_name: str) -> str:
+    return f"bdt_score_{class_name}"
+
+
+
+def _safe_significance(signal_weight: float, background_weight: float) -> dict[str, float]:
+    signal_weight = float(signal_weight)
+    background_weight = float(background_weight)
+    total_weight = signal_weight + background_weight
+    return {
+        "signal_weight_keep": signal_weight,
+        "background_weight_keep": background_weight,
+        "s_over_b": _safe_fraction(signal_weight, background_weight),
+        "s_over_sqrt_s_plus_b": signal_weight / np.sqrt(total_weight) if total_weight > 0.0 else float("nan"),
+        "s_over_sqrt_b": signal_weight / np.sqrt(background_weight) if background_weight > 0.0 else float("nan"),
+    }
+
+
+def _score_keep_direction(score_name: str) -> str:
+    return "low" if score_name == "qcd" else "high"
+
+
+def _score_keep_region_text(score_name: str) -> str:
+    return "score <= cut" if _score_keep_direction(score_name) == "low" else "score >= cut"
+
+
+def _score_drop_region_text(score_name: str) -> str:
+    return "score > cut" if _score_keep_direction(score_name) == "low" else "score < cut"
+
+
+def _target_score_cut(
+    score_name: str,
+    signal_scores: np.ndarray,
+    signal_weights: np.ndarray,
+    target_drop_fraction: float,
+) -> float:
+    quantile = 1.0 - target_drop_fraction if _score_keep_direction(score_name) == "low" else target_drop_fraction
+    return float(weighted_quantile(signal_scores, signal_weights, max(0.0, min(1.0, quantile))))
+
+
+def _score_region_masks(score_name: str, scores: np.ndarray, score_cut: float) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    if _score_keep_direction(score_name) == "low":
+        keep_mask = scores <= score_cut
+        drop_mask_strict = scores > score_cut
+        drop_mask_inclusive = scores >= score_cut
+    else:
+        keep_mask = scores >= score_cut
+        drop_mask_strict = scores < score_cut
+        drop_mask_inclusive = scores <= score_cut
+    return keep_mask, drop_mask_strict, drop_mask_inclusive
+
+
+def _format_metric(value: float) -> str:
+    if not np.isfinite(value):
+        return "nan"
+    return f"{value:12.6f}"
+
+
+
+def _build_class_score_threshold_scan(
     *,
     class_names: list[str],
     class_labels: dict[str, str],
@@ -233,168 +300,398 @@ def _build_qcd_score_threshold_scan(
     process_labels: dict[str, str],
     trainable_mask: np.ndarray,
 ) -> dict[str, object] | None:
-    if "qcd" not in class_names:
-        return None
+    score_payloads: dict[str, object] = {}
+    score_order: list[str] = []
+    class_index_by_name = {class_name: class_index for class_index, class_name in enumerate(class_names)}
 
-    qcd_class_index = class_names.index("qcd")
-    qcd_scores = np.asarray(score_by_class["qcd"], dtype=np.float64)
-    qcd_train_mask = trainable_mask & (labels == qcd_class_index)
-    qcd_total_weight = float(np.sum(weights[qcd_train_mask]))
-    if qcd_total_weight <= 0.0:
-        return None
+    for signal_class_index, score_name in enumerate(class_names):
+        if score_name not in score_by_class:
+            continue
 
-    qcd_train_scores = qcd_scores[qcd_train_mask]
-    qcd_train_weights = weights[qcd_train_mask]
+        scores = np.asarray(score_by_class[score_name], dtype=np.float64)
+        signal_class_mask = trainable_mask & (labels == signal_class_index)
+        background_class_mask = trainable_mask & (labels >= 0) & (labels != signal_class_index)
+        signal_total_weight = float(np.sum(weights[signal_class_mask]))
+        background_total_weight = float(np.sum(weights[background_class_mask]))
+        if signal_total_weight <= 0.0:
+            continue
 
-    payload_targets: list[dict[str, object]] = []
-    for target_drop_fraction in QCD_SCORE_DROP_TARGETS:
-        score_cut = float(
-            weighted_quantile(
-                qcd_train_scores,
-                qcd_train_weights,
-                max(0.0, min(1.0, 1.0 - target_drop_fraction)),
-            )
-        )
-        keep_mask = qcd_scores <= score_cut
-        drop_mask_gt = qcd_scores > score_cut
-        drop_mask_ge = qcd_scores >= score_cut
-        kept_trainable_mask = trainable_mask & keep_mask
+        signal_scores = scores[signal_class_mask]
+        signal_weights = weights[signal_class_mask]
+        keep_direction = _score_keep_direction(score_name)
+        keep_region = _score_keep_region_text(score_name)
+        drop_region = _score_drop_region_text(score_name)
+        targets: list[dict[str, object]] = []
+        for target_drop_fraction in CLASS_SCORE_DROP_TARGETS:
+            score_cut = _target_score_cut(score_name, signal_scores, signal_weights, target_drop_fraction)
+            keep_mask, drop_mask_strict, drop_mask_inclusive = _score_region_masks(score_name, scores, score_cut)
+            kept_trainable_mask = trainable_mask & keep_mask
 
-        qcd_weight_drop_gt = float(np.sum(weights[qcd_train_mask & drop_mask_gt]))
-        qcd_weight_drop_ge = float(np.sum(weights[qcd_train_mask & drop_mask_ge]))
-        qcd_weight_keep = float(np.sum(weights[qcd_train_mask & keep_mask]))
-        total_weight_keep_all = float(np.sum(weights[keep_mask]))
-        total_weight_keep_trainable = float(np.sum(weights[kept_trainable_mask]))
+            signal_weight_drop_strict = float(np.sum(weights[signal_class_mask & drop_mask_strict]))
+            signal_weight_drop_inclusive = float(np.sum(weights[signal_class_mask & drop_mask_inclusive]))
+            signal_weight_keep = float(np.sum(weights[signal_class_mask & keep_mask]))
+            background_weight_keep = float(np.sum(weights[background_class_mask & keep_mask]))
+            total_weight_keep_all = float(np.sum(weights[keep_mask]))
+            total_weight_keep_trainable = float(np.sum(weights[kept_trainable_mask]))
 
-        target_payload: dict[str, object] = {
-            "target_qcd_drop_fraction": float(target_drop_fraction),
-            "score_cut": score_cut,
-            "qcd_drop_fraction_gt_cut": _safe_fraction(qcd_weight_drop_gt, qcd_total_weight),
-            "qcd_drop_fraction_ge_cut": _safe_fraction(qcd_weight_drop_ge, qcd_total_weight),
-            "qcd_keep_fraction_le_cut": _safe_fraction(qcd_weight_keep, qcd_total_weight),
-            "qcd_weight_total": qcd_total_weight,
-            "qcd_weight_keep_le_cut": qcd_weight_keep,
-            "total_weight_keep_all_processes": total_weight_keep_all,
-            "total_weight_keep_trainable_classes": total_weight_keep_trainable,
-            "processes": {},
-            "training_classes": {},
+            target_payload: dict[str, object] = {
+                "target_signal_drop_fraction": float(target_drop_fraction),
+                "score_cut": score_cut,
+                "keep_direction": keep_direction,
+                "keep_region": keep_region,
+                "drop_region": drop_region,
+                "signal_drop_fraction_strict": _safe_fraction(signal_weight_drop_strict, signal_total_weight),
+                "signal_drop_fraction_inclusive": _safe_fraction(signal_weight_drop_inclusive, signal_total_weight),
+                "signal_keep_fraction_in_region": _safe_fraction(signal_weight_keep, signal_total_weight),
+                "signal_weight_total": signal_total_weight,
+                "signal_weight_keep_in_region": signal_weight_keep,
+                "background_weight_total": background_total_weight,
+                "background_weight_keep_in_region": background_weight_keep,
+                "significance": _safe_significance(signal_weight_keep, background_weight_keep),
+                "total_weight_keep_all_processes": total_weight_keep_all,
+                "total_weight_keep_trainable_classes": total_weight_keep_trainable,
+                "processes": {},
+                "training_classes": {},
+            }
+            if score_name == "qcd":
+                target_payload.update(
+                    {
+                        "target_qcd_drop_fraction": float(target_drop_fraction),
+                        "qcd_drop_fraction_gt_cut": target_payload["signal_drop_fraction_strict"],
+                        "qcd_drop_fraction_ge_cut": target_payload["signal_drop_fraction_inclusive"],
+                        "qcd_keep_fraction_le_cut": target_payload["signal_keep_fraction_in_region"],
+                        "qcd_weight_total": signal_total_weight,
+                        "qcd_weight_keep_le_cut": signal_weight_keep,
+                    }
+                )
+                auxiliary_significances: dict[str, object] = {}
+                tth_index = class_index_by_name.get("tth")
+                if tth_index is not None:
+                    auxiliary_signal_mask = trainable_mask & (labels == tth_index)
+                    auxiliary_background_mask = np.zeros(labels.shape, dtype=bool)
+                    background_names = []
+                    background_labels = {}
+                    for background_name in ["ttbar", "qcd"]:
+                        background_index = class_index_by_name.get(background_name)
+                        if background_index is None:
+                            continue
+                        auxiliary_background_mask |= trainable_mask & (labels == background_index)
+                        background_names.append(background_name)
+                        background_labels[background_name] = class_labels.get(background_name, background_name)
+                    auxiliary_signal_weight_keep = float(np.sum(weights[auxiliary_signal_mask & keep_mask]))
+                    auxiliary_background_weight_keep = float(np.sum(weights[auxiliary_background_mask & keep_mask]))
+                    auxiliary_significances["tth_vs_ttbar_plus_qcd"] = {
+                        "signal_class_name": "tth",
+                        "signal_class_label": class_labels.get("tth", "tth"),
+                        "background_class_names": background_names,
+                        "background_class_labels": background_labels,
+                        "signal_weight_total": float(np.sum(weights[auxiliary_signal_mask])),
+                        "background_weight_total": float(np.sum(weights[auxiliary_background_mask])),
+                        **_safe_significance(auxiliary_signal_weight_keep, auxiliary_background_weight_keep),
+                    }
+                if auxiliary_significances:
+                    target_payload["auxiliary_significances"] = auxiliary_significances
+
+            process_payload: dict[str, object] = {}
+            for process in process_order:
+                process_mask = processes == process
+                if not np.any(process_mask):
+                    continue
+                total_weight = float(np.sum(weights[process_mask]))
+                kept_weight = float(np.sum(weights[process_mask & keep_mask]))
+                process_payload[process] = {
+                    "label": process_labels.get(process, process),
+                    "n_total": int(np.sum(process_mask)),
+                    "n_keep_in_region": int(np.sum(process_mask & keep_mask)),
+                    "weight_total": total_weight,
+                    "weight_keep_in_region": kept_weight,
+                    "keep_fraction_in_region": _safe_fraction(kept_weight, total_weight),
+                    "remaining_share_of_all_kept": _safe_fraction(kept_weight, total_weight_keep_all),
+                }
+            target_payload["processes"] = process_payload
+
+            class_payload: dict[str, object] = {}
+            for class_index, class_name in enumerate(class_names):
+                class_mask = trainable_mask & (labels == class_index)
+                if not np.any(class_mask):
+                    continue
+                total_weight = float(np.sum(weights[class_mask]))
+                kept_weight = float(np.sum(weights[class_mask & keep_mask]))
+                class_payload[class_name] = {
+                    "label": class_labels.get(class_name, class_name),
+                    "n_total": int(np.sum(class_mask)),
+                    "n_keep_in_region": int(np.sum(class_mask & keep_mask)),
+                    "weight_total": total_weight,
+                    "weight_keep_in_region": kept_weight,
+                    "keep_fraction_in_region": _safe_fraction(kept_weight, total_weight),
+                    "remaining_share_of_trainable_kept": _safe_fraction(kept_weight, total_weight_keep_trainable),
+                    "is_signal_for_score": bool(class_name == score_name),
+                }
+            target_payload["training_classes"] = class_payload
+            targets.append(target_payload)
+
+        background_class_names = [name for name in class_names if name != score_name]
+        score_payloads[score_name] = {
+            "score_name": score_name,
+            "score_branch": _event_bdt_score_branch(score_name),
+            "score_label": class_labels.get(score_name, score_name),
+            "signal_class_name": score_name,
+            "signal_class_label": class_labels.get(score_name, score_name),
+            "background_class_names": background_class_names,
+            "background_class_labels": {
+                name: class_labels.get(name, name)
+                for name in background_class_names
+            },
+            "keep_direction": keep_direction,
+            "keep_region": keep_region,
+            "drop_region": drop_region,
+            "targets": targets,
         }
+        score_order.append(score_name)
 
-        process_payload: dict[str, object] = {}
-        for process in process_order:
-            process_mask = processes == process
-            if not np.any(process_mask):
-                continue
-            total_weight = float(np.sum(weights[process_mask]))
-            kept_weight = float(np.sum(weights[process_mask & keep_mask]))
-            process_payload[process] = {
-                "label": process_labels.get(process, process),
-                "n_total": int(np.sum(process_mask)),
-                "n_keep_le_cut": int(np.sum(process_mask & keep_mask)),
-                "weight_total": total_weight,
-                "weight_keep_le_cut": kept_weight,
-                "keep_fraction_le_cut": _safe_fraction(kept_weight, total_weight),
-                "remaining_share_of_all_kept": _safe_fraction(kept_weight, total_weight_keep_all),
-            }
-        target_payload["processes"] = process_payload
-
-        class_payload: dict[str, object] = {}
-        for class_index, class_name in enumerate(class_names):
-            class_mask = trainable_mask & (labels == class_index)
-            if not np.any(class_mask):
-                continue
-            total_weight = float(np.sum(weights[class_mask]))
-            kept_weight = float(np.sum(weights[class_mask & keep_mask]))
-            class_payload[class_name] = {
-                "label": class_labels.get(class_name, class_name),
-                "n_total": int(np.sum(class_mask)),
-                "n_keep_le_cut": int(np.sum(class_mask & keep_mask)),
-                "weight_total": total_weight,
-                "weight_keep_le_cut": kept_weight,
-                "keep_fraction_le_cut": _safe_fraction(kept_weight, total_weight),
-                "remaining_share_of_trainable_kept": _safe_fraction(kept_weight, total_weight_keep_trainable),
-            }
-        target_payload["training_classes"] = class_payload
-        payload_targets.append(target_payload)
+    if not score_payloads:
+        return None
 
     return {
-        "score_branch": "bdt_score_qcd",
-        "qcd_class_name": "qcd",
-        "qcd_class_label": class_labels.get("qcd", "qcd"),
-        "targets": payload_targets,
+        "scan_targets": list(CLASS_SCORE_DROP_TARGETS),
+        "score_order": score_order,
+        "score_directions": {
+            score_name: {
+                "keep_direction": _score_keep_direction(score_name),
+                "keep_region": _score_keep_region_text(score_name),
+                "drop_region": _score_drop_region_text(score_name),
+            }
+            for score_name in score_order
+        },
+        "scores": score_payloads,
         "notes": [
-            "Thresholds are derived from the weighted QCD score quantile in the trainable QCD class.",
-            "Recommended keep region is score <= cut, equivalent to dropping events with score > cut.",
-            "Because score values are discrete, the target QCD drop fraction and the actual strict/inclusive fractions can differ slightly at the threshold.",
+            "Thresholds are derived from the weighted score quantile in the corresponding trainable class.",
+            "For tth and ttbar, keep region is score >= cut. For qcd, keep region is score <= cut.",
+            "For each main score summary, S is the corresponding training class and B is every other trainable class.",
+            "The qcd section also includes an auxiliary ttH significance on the same QCD cut, with S=tth and B=ttbar+qcd.",
+            "Because score values are discrete, the target class drop fraction and the actual strict/inclusive fractions can differ slightly at the threshold.",
             "Process-level rows are evaluated on all events in predictions.npz, including eval-only processes.",
             "Training-class rows are evaluated only on trainable events with labels >= 0.",
         ],
     }
 
 
+def _qcd_score_threshold_scan_from_class_scan(payload: dict[str, object] | None) -> dict[str, object] | None:
+    if payload is None:
+        return None
+    scores = payload.get("scores", {})
+    if not isinstance(scores, dict) or "qcd" not in scores:
+        return None
+    qcd_payload = dict(scores["qcd"])
+    qcd_payload.update(
+        {
+            "qcd_class_name": qcd_payload.get("signal_class_name", "qcd"),
+            "qcd_class_label": qcd_payload.get("signal_class_label", "QCD"),
+            "keep_direction": qcd_payload.get("keep_direction", _score_keep_direction("qcd")),
+            "keep_region": qcd_payload.get("keep_region", _score_keep_region_text("qcd")),
+            "drop_region": qcd_payload.get("drop_region", _score_drop_region_text("qcd")),
+            "notes": payload.get("notes", []),
+        }
+    )
+    return qcd_payload
 
-def _format_qcd_score_threshold_scan_text(payload: dict[str, object]) -> str:
+
+def _format_significance_columns(row: dict[str, object]) -> str:
+    significance = dict(row.get("significance", {}))
+    return (
+        f"{_format_weight(float(significance.get('signal_weight_keep', float('nan')))):>12}  "
+        f"{_format_weight(float(significance.get('background_weight_keep', float('nan')))):>12}  "
+        f"{_format_metric(float(significance.get('s_over_b', float('nan')))):>12}  "
+        f"{_format_metric(float(significance.get('s_over_sqrt_s_plus_b', float('nan')))):>14}  "
+        f"{_format_metric(float(significance.get('s_over_sqrt_b', float('nan')))):>12}"
+    )
+
+
+
+def _format_score_scan_section(score_payload: dict[str, object], *, title: str) -> list[str]:
+    signal_label = str(score_payload.get("signal_class_label", score_payload.get("score_name", "signal")))
+    signal_name = str(score_payload.get("signal_class_name", score_payload.get("score_name", "signal")))
+    background_labels = dict(score_payload.get("background_class_labels", {}))
+    background_text = ", ".join(str(label) for label in background_labels.values()) or "none"
+    keep_region = str(score_payload.get("keep_region", "score <= cut"))
+    drop_region = str(score_payload.get("drop_region", "score > cut"))
     lines = [
-        "QCD score threshold scan",
-        "",
-        f"Score branch: {payload['score_branch']}",
-        "Keep region: score <= cut",
-        "Drop region: score > cut",
-        "Ties at the threshold can make the actual QCD drop fraction differ slightly from the target.",
+        title,
+        f"Score branch: {score_payload['score_branch']}",
+        f"Signal class for S: {signal_label} ({signal_name})",
+        f"Background classes for B: {background_text}",
+        f"Keep region: {keep_region}",
+        f"Drop region: {drop_region}",
+        "Ties at the threshold can make the actual class drop fraction differ slightly from the target.",
         "",
         "Summary:",
-        f"{'Target drop':>12}  {'Score cut':>10}  {'QCD drop > cut':>16}  {'QCD drop >= cut':>17}  {'QCD keep <= cut':>17}",
+        (
+            f"{'Target drop':>12}  {'Score cut':>10}  {'Class drop':>12}  "
+            f"{'Class keep':>12}  {'S kept':>12}  {'B kept':>12}  "
+            f"{'S/B':>12}  {'S/sqrt(S+B)':>14}  {'S/sqrt(B)':>12}"
+        ),
     ]
-
-    targets = list(payload.get("targets", []))
+    targets = list(score_payload.get("targets", []))
     for row in targets:
         lines.append(
-            f"{_format_fraction(float(row['target_qcd_drop_fraction'])):>12}  "
+            f"{_format_fraction(float(row['target_signal_drop_fraction'])):>12}  "
             f"{float(row['score_cut']):10.6f}  "
-            f"{_format_fraction(float(row['qcd_drop_fraction_gt_cut'])):>16}  "
-            f"{_format_fraction(float(row['qcd_drop_fraction_ge_cut'])):>17}  "
-            f"{_format_fraction(float(row['qcd_keep_fraction_le_cut'])):>17}"
+            f"{_format_fraction(float(row['signal_drop_fraction_strict'])):>12}  "
+            f"{_format_fraction(float(row['signal_keep_fraction_in_region'])):>12}  "
+            f"{_format_significance_columns(row)}"
         )
+
+    has_auxiliary_qcd_tth = any(
+        "tth_vs_ttbar_plus_qcd" in dict(row.get("auxiliary_significances", {}))
+        for row in targets
+    )
+    if has_auxiliary_qcd_tth:
+        lines.extend(
+            [
+                "",
+                "Auxiliary ttH significance on the same cut:",
+                (
+                    f"{'Target drop':>12}  {'Score cut':>10}  {'S kept':>12}  {'B kept':>12}  "
+                    f"{'S/B':>12}  {'S/sqrt(S+B)':>14}  {'S/sqrt(B)':>12}"
+                ),
+            ]
+        )
+        for row in targets:
+            auxiliary = dict(row.get("auxiliary_significances", {})).get("tth_vs_ttbar_plus_qcd")
+            if auxiliary is None:
+                continue
+            auxiliary = dict(auxiliary)
+            lines.append(
+                f"{_format_fraction(float(row['target_signal_drop_fraction'])):>12}  "
+                f"{float(row['score_cut']):10.6f}  "
+                f"{_format_weight(float(auxiliary.get('signal_weight_keep', float('nan')))):>12}  "
+                f"{_format_weight(float(auxiliary.get('background_weight_keep', float('nan')))):>12}  "
+                f"{_format_metric(float(auxiliary.get('s_over_b', float('nan')))):>12}  "
+                f"{_format_metric(float(auxiliary.get('s_over_sqrt_s_plus_b', float('nan')))):>14}  "
+                f"{_format_metric(float(auxiliary.get('s_over_sqrt_b', float('nan')))):>12}"
+            )
 
     for row in targets:
         lines.extend(
             [
                 "",
                 (
-                    f"Target QCD drop = {_format_fraction(float(row['target_qcd_drop_fraction']))}, "
+                    f"Target class drop = {_format_fraction(float(row['target_signal_drop_fraction']))}, "
                     f"score cut = {float(row['score_cut']):.6f}"
                 ),
                 "Process-level keep fractions and remaining composition:",
-                f"{'Process':<20}  {'Keep <= cut':>12}  {'Share of kept':>14}  {'Weight kept':>12}  {'Weight total':>12}",
+                f"{'Process':<20}  {'Keep in region':>14}  {'Share of kept':>14}  {'Weight kept':>12}  {'Weight total':>12}",
             ]
         )
         for process, process_row in dict(row.get("processes", {})).items():
             label = str(process_row.get("label", process))
             lines.append(
                 f"{label:<20}  "
-                f"{_format_fraction(float(process_row['keep_fraction_le_cut'])):>12}  "
+                f"{_format_fraction(float(process_row['keep_fraction_in_region'])):>14}  "
                 f"{_format_fraction(float(process_row['remaining_share_of_all_kept'])):>14}  "
-                f"{_format_weight(float(process_row['weight_keep_le_cut'])):>12}  "
+                f"{_format_weight(float(process_row['weight_keep_in_region'])):>12}  "
                 f"{_format_weight(float(process_row['weight_total'])):>12}"
             )
 
         lines.extend(
             [
                 "Training-class keep fractions and remaining composition:",
-                f"{'Class':<20}  {'Keep <= cut':>12}  {'Share of kept':>14}  {'Weight kept':>12}  {'Weight total':>12}",
+                f"{'Class':<20}  {'Role':>8}  {'Keep in region':>14}  {'Share of kept':>14}  {'Weight kept':>12}  {'Weight total':>12}",
             ]
         )
         for class_name, class_row in dict(row.get("training_classes", {})).items():
             label = str(class_row.get("label", class_name))
+            role = "S" if bool(class_row.get("is_signal_for_score", False)) else "B"
             lines.append(
                 f"{label:<20}  "
-                f"{_format_fraction(float(class_row['keep_fraction_le_cut'])):>12}  "
+                f"{role:>8}  "
+                f"{_format_fraction(float(class_row['keep_fraction_in_region'])):>14}  "
                 f"{_format_fraction(float(class_row['remaining_share_of_trainable_kept'])):>14}  "
-                f"{_format_weight(float(class_row['weight_keep_le_cut'])):>12}  "
+                f"{_format_weight(float(class_row['weight_keep_in_region'])):>12}  "
                 f"{_format_weight(float(class_row['weight_total'])):>12}"
             )
+    return lines
 
+
+def _format_class_score_threshold_scan_text(payload: dict[str, object]) -> str:
+    lines = [
+        "Class score threshold scan",
+        "",
+        "Keep/drop direction depends on the score.",
+        "For tth and ttbar, keep region is score >= cut. For qcd, keep region is score <= cut.",
+        "For each main score summary, S is the corresponding training class and B is every other trainable class.",
+        "The qcd section also includes an auxiliary ttH significance with S=tth and B=ttbar+qcd.",
+        "",
+    ]
+    scores = dict(payload.get("scores", {}))
+    for index, score_name in enumerate(list(payload.get("score_order", []))):
+        score_payload = dict(scores.get(score_name, {}))
+        if not score_payload:
+            continue
+        if index:
+            lines.extend(["", "=" * 96, ""])
+        title = f"Score scan: {score_payload.get('score_label', score_name)} ({score_name})"
+        lines.extend(_format_score_scan_section(score_payload, title=title))
     return "\n".join(lines) + "\n"
+
+
+def _format_qcd_score_threshold_scan_text(payload: dict[str, object]) -> str:
+    lines = [
+        "QCD score threshold scan",
+        "",
+    ]
+    lines.extend(_format_score_scan_section(payload, title="Score scan: QCD (qcd)"))
+    return "\n".join(lines) + "\n"
+
+
+
+def _training_metric_names(fold_summaries: list[dict[str, object]]) -> list[str]:
+    metric_names: list[str] = []
+    for fold_summary in fold_summaries:
+        evals_result = fold_summary.get("evals_result", {})
+        if not isinstance(evals_result, dict):
+            continue
+        for dataset_metrics in evals_result.values():
+            if not isinstance(dataset_metrics, dict):
+                continue
+            for metric_name in dataset_metrics:
+                if metric_name not in metric_names:
+                    metric_names.append(str(metric_name))
+    preferred = ["mlogloss", "logloss", "merror", "auc"]
+    return [name for name in preferred if name in metric_names] + [
+        name for name in metric_names if name not in preferred
+    ]
+
+
+
+def _safe_plot_name(name: str) -> str:
+    return "".join(char if char.isalnum() or char in {"_", "-"} else "_" for char in name)
+
+
+
+def _load_training_summary(config: EventBdtConfig) -> dict[str, object] | None:
+    if not config.summary_path.exists():
+        return None
+    with config.summary_path.open("r", encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+
+def _write_training_curve_outputs(
+    config: EventBdtConfig,
+    training_summary: dict[str, object] | None,
+) -> list[str]:
+    if training_summary is None:
+        return []
+    fold_summaries = list(training_summary.get("fold_summaries", []))
+    if not fold_summaries:
+        return []
+    outputs: list[str] = []
+    for metric_name in _training_metric_names(fold_summaries):
+        outpath = config.plot_dir_path / f"training_curve__{_safe_plot_name(metric_name)}.png"
+        plot_training_metric_curves(outpath, fold_summaries=fold_summaries, metric_name=metric_name)
+        outputs.append(str(outpath))
+    return outputs
 
 
 
@@ -785,7 +1082,7 @@ def _evaluate_outputs(config: EventBdtConfig) -> dict[str, object]:
                 x_label=f"{score_label} score",
             )
 
-        qcd_scan_payload = _build_qcd_score_threshold_scan(
+        class_scan_payload = _build_class_score_threshold_scan(
             class_names=class_names,
             class_labels=class_labels,
             score_by_class=score_by_class,
@@ -796,13 +1093,21 @@ def _evaluate_outputs(config: EventBdtConfig) -> dict[str, object]:
             process_labels=process_labels,
             trainable_mask=trainable_mask,
         )
-        summary: dict[str, float | str] = {"weighted_macro_auc": weighted_macro_auc}
-        if qcd_scan_payload is not None:
-            txt_path, json_path = _qcd_score_threshold_scan_paths(config)
-            txt_path.write_text(_format_qcd_score_threshold_scan_text(qcd_scan_payload), encoding="utf-8")
-            _write_json(json_path, qcd_scan_payload)
-            summary["qcd_score_threshold_scan_txt"] = str(txt_path)
-            summary["qcd_score_threshold_scan_json"] = str(json_path)
+        summary: dict[str, object] = {"weighted_macro_auc": weighted_macro_auc}
+        if class_scan_payload is not None:
+            txt_path, json_path = _class_score_threshold_scan_paths(config)
+            txt_path.write_text(_format_class_score_threshold_scan_text(class_scan_payload), encoding="utf-8")
+            _write_json(json_path, class_scan_payload)
+            summary["class_score_threshold_scan_txt"] = str(txt_path)
+            summary["class_score_threshold_scan_json"] = str(json_path)
+
+            qcd_scan_payload = _qcd_score_threshold_scan_from_class_scan(class_scan_payload)
+            if qcd_scan_payload is not None:
+                qcd_txt_path, qcd_json_path = _qcd_score_threshold_scan_paths(config)
+                qcd_txt_path.write_text(_format_qcd_score_threshold_scan_text(qcd_scan_payload), encoding="utf-8")
+                _write_json(qcd_json_path, qcd_scan_payload)
+                summary["qcd_score_threshold_scan_txt"] = str(qcd_txt_path)
+                summary["qcd_score_threshold_scan_json"] = str(qcd_json_path)
 
         if config.analysis_branches:
             if not config.prepared_inputs_path.exists():
@@ -836,6 +1141,9 @@ def _evaluate_outputs(config: EventBdtConfig) -> dict[str, object]:
                     class_labels=class_labels,
                 )
                 summary["mass_correlation_summary_json"] = str(summary_path)
+        training_curve_paths = _write_training_curve_outputs(config, _load_training_summary(config))
+        if training_curve_paths:
+            summary["training_curve_plots"] = training_curve_paths
         return summary
 
     scores = arrays["bdt_score"].astype(float)
@@ -892,7 +1200,11 @@ def _evaluate_outputs(config: EventBdtConfig) -> dict[str, object]:
             process_labels=family_labels,
         )
 
-    return {"weighted_auc": float(metadata["weighted_auc"])}
+    summary: dict[str, object] = {"weighted_auc": float(metadata["weighted_auc"])}
+    training_curve_paths = _write_training_curve_outputs(config, _load_training_summary(config))
+    if training_curve_paths:
+        summary["training_curve_plots"] = training_curve_paths
+    return summary
 
 
 
@@ -920,9 +1232,12 @@ def main() -> None:
             force_prepare=bool(args.force_prepare),
             force_retrain=bool(args.force_retrain),
         )
+        training_curve_paths = _write_training_curve_outputs(config, summary)
         print("Event-BDT training finished.")
         print(f"Output directory: {config.outdir}")
         print(_metric_line(summary))
+        if training_curve_paths:
+            print(f"Training curves: {', '.join(training_curve_paths)}")
         return
 
     if args.command == "evaluate":
@@ -930,8 +1245,12 @@ def main() -> None:
         print("Event-BDT evaluation plots finished.")
         print(f"Plot directory: {config.plot_dir_path}")
         print(_metric_line(summary))
+        if "class_score_threshold_scan_txt" in summary:
+            print(f"Class score scan: {summary['class_score_threshold_scan_txt']}")
         if "qcd_score_threshold_scan_txt" in summary:
             print(f"QCD score scan: {summary['qcd_score_threshold_scan_txt']}")
+        if "training_curve_plots" in summary:
+            print(f"Training curves: {', '.join(summary['training_curve_plots'])}")
         if "mass_correlation_summary_json" in summary:
             print(f"Mass correlation summary: {summary['mass_correlation_summary_json']}")
         return
