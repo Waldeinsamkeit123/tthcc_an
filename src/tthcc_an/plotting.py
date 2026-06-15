@@ -81,7 +81,6 @@ def _cms_label(ax: plt.Axes, plot_style: PlotStyle) -> None:
 
 def private_cms_label(ax: plt.Axes, plot_style: PlotStyle) -> None:
     hep.cms.label(
-        label="Private Work",
         data=False,
         ax=ax,
         fontsize=plot_style.cms_size,

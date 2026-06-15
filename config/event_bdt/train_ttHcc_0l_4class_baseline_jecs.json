@@ -1,7 +1,7 @@
 {
   "samples_config": "samples_2024_0l_jecs_v1.json",
   "study": {
-    "outdir": "outputs/event_bdt_ttHcc_0l_3class_baseline_jecs_v3",
+    "outdir": "outputs/event_bdt_ttHcc_0l_4class_baseline_jecs_v1",
     "tree_name": "Events",
     "base_selection": "(ntargetfatjet >= 1) & (TargetFatJet_pt >= 300) & (np.abs(TargetFatJet_eta) <= 2.4)",
     "selection_branches": [
@@ -56,11 +56,18 @@
     "weight_branch": "weight",
     "training_classes": [
       {
-        "name": "tth",
-        "label": "ttH(bb+cc)",
+        "name": "tthbb",
+        "label": "ttH(H->bb)",
         "group": "signal",
         "processes": [
-          "ttHbb",
+          "ttHbb"
+        ]
+      },
+      {
+        "name": "tthcc",
+        "label": "ttH(H->cc)",
+        "group": "signal",
+        "processes": [
           "ttHcc"
         ]
       },
@@ -89,7 +96,7 @@
     "k_folds": 5,
     "random_seed": 42,
     "uproot_step_size": "200 MB",
-    "model_name": "xgb_ttHcc_0l_3class_baseline",
+    "model_name": "xgb_ttHcc_0l_4class_baseline",
     "prepared_inputs": "prepared_inputs.npz",
     "predictions": "predictions.npz",
     "summary": "training_summary.json",
@@ -168,7 +175,10 @@
   },
   "xgboost": {
     "tree_method": "hist",
-    "eval_metric": ["merror", "mlogloss"],
+    "eval_metric": [
+      "merror",
+      "mlogloss"
+    ],
     "eta": 0.05,
     "max_depth": 4,
     "subsample": 0.8,
@@ -176,6 +186,6 @@
     "min_child_weight": 1.0,
     "num_boost_round": 600,
     "early_stopping_rounds": 30,
-    "early_stopping_min_delta": 1e-4
+    "early_stopping_min_delta": 0.0001
   }
 }

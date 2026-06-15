@@ -23,6 +23,8 @@ VARIABLE_DISPLAY_LABELS = {
     "TargetFatJet_mass": r"TargetFatJet mass [GeV]",
     "TargetFatJet_msoftdrop": r"TargetFatJet msoftdrop [GeV]",
     "CleanedJet_mass": r"Leading CleanedJet mass [GeV]",
+    "TargetFatJet_regressed_mass_generic": r"TargetFatJet regressed mass generic [GeV]",
+    "TargetFatJet_regressed_mass_x2p": r"TargetFatJet regressed mass X2P [GeV]",
 }
 
 
@@ -43,7 +45,6 @@ def _setup_style() -> None:
 
 def _cms_label(ax: plt.Axes) -> None:
     hep.cms.label(
-        label="Private Work",
         data=False,
         ax=ax,
         rlabel="2024 (13.6 TeV)",
@@ -661,4 +662,286 @@ def plot_score_vs_mass_grid(
         colorbar = fig.colorbar(color_mesh, ax=axes, fraction=0.03, pad=0.02)
         colorbar.set_label("Weighted events / bin", fontsize=AXIS_LABEL_SIZE)
     _cms_label(axes[0, 0])
+    _save(fig, outpath)
+
+
+def plot_tth_process_roc_overlay(
+    outpath: Path,
+    curves: list[dict[str, object]],
+) -> None:
+    _setup_style()
+    fig, ax = plt.subplots(figsize=(7.4, 6.4))
+    for index, curve in enumerate(curves):
+        signal_efficiency = np.asarray(curve["signal_efficiency"], dtype=np.float64)
+        background_rejection = np.asarray(curve["background_rejection"], dtype=np.float64)
+        label = str(curve["label"])
+        auc_value = float(curve["auc"])
+        ax.plot(
+            signal_efficiency,
+            background_rejection,
+            linewidth=1.9,
+            color=_class_color(index),
+            label=f"{label} (AUC = {auc_value:.4f})",
+        )
+    ax.plot([0.0, 1.0], [1.0, 0.0], linestyle="--", color="black", linewidth=1.1)
+    ax.set_xlim(0.0, 1.0)
+    ax.set_ylim(0.0, 1.02)
+    ax.set_xlabel("Signal efficiency", fontsize=AXIS_LABEL_SIZE)
+    ax.set_ylabel("Background rejection", fontsize=AXIS_LABEL_SIZE)
+    ax.set_title("BDT ttH score process-pair ROC", fontsize=TITLE_SIZE)
+    ax.tick_params(labelsize=TICK_LABEL_SIZE)
+    ax.grid(alpha=0.25)
+    ax.legend(frameon=False, loc="best", fontsize=LEGEND_FONT_SIZE)
+    _cms_label(ax)
+    _save(fig, outpath)
+
+
+
+def _draw_qcd_cut_markers(ax: plt.Axes, marked_cuts: list[dict[str, float]]) -> None:
+    for marker in marked_cuts:
+        cut = float(marker["score_cut"])
+        target = float(marker["target_qcd_drop_fraction"])
+        ax.axvline(cut, color="gray", linestyle=":" if target < 0.99 else "--", linewidth=0.9, alpha=0.45)
+
+
+
+def _format_annotation_value(value: object, precision: int = 1) -> str:
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return "nan"
+    if not np.isfinite(numeric):
+        return "nan"
+    return f"{numeric:.{precision}f}"
+
+
+
+def plot_tth_qcd_cut_significance_scan(
+    outpath: Path,
+    scan_rows: list[dict[str, float]],
+    marked_cuts: list[dict[str, float]],
+    *,
+    metric: str = "s_over_sqrt_b",
+) -> None:
+    _setup_style()
+    metric_specs = {
+        "s_over_sqrt_b": {
+            "left_key": "tthbb_s_over_sqrt_qcd",
+            "right_key": "tthcc_s_over_sqrt_qcd",
+            "left_label": r"ttH(H$\to$bb) / $\sqrt{QCD}$",
+            "right_label": r"ttH(H$\to$cc) / $\sqrt{QCD}$",
+            "title": r"$S / \sqrt{B}$ in mSD window",
+        },
+        "s_over_sqrt_s_plus_b": {
+            "left_key": "tthbb_s_over_sqrt_s_plus_qcd",
+            "right_key": "tthcc_s_over_sqrt_s_plus_qcd",
+            "left_label": r"ttH(H$\to$bb) / $\sqrt{S+QCD}$",
+            "right_label": r"ttH(H$\to$cc) / $\sqrt{S+QCD}$",
+            "title": r"$S / \sqrt{S+B}$ in mSD window",
+        },
+    }
+    if metric not in metric_specs:
+        raise ValueError(f"Unknown QCD cut significance metric: {metric}")
+    spec = metric_specs[metric]
+    cuts = np.asarray([row["qcd_score_cut"] for row in scan_rows], dtype=np.float64)
+    tthbb = np.asarray([row[spec["left_key"]] for row in scan_rows], dtype=np.float64)
+    tthcc = np.asarray([row[spec["right_key"]] for row in scan_rows], dtype=np.float64)
+
+    fig, ax_left = plt.subplots(figsize=(7.8, 6.2))
+    ax_right = ax_left.twinx()
+    color_bb = process_color("ttHbb", 0)
+    color_cc = process_color("ttHcc", 1)
+    line_bb = ax_left.plot(cuts, tthbb, linewidth=2.0, label=str(spec["left_label"]), color=color_bb)[0]
+    line_cc = ax_right.plot(cuts, tthcc, linewidth=2.0, label=str(spec["right_label"]), color=color_cc)[0]
+    _draw_qcd_cut_markers(ax_left, marked_cuts)
+
+    ax_left.set_xlim(0.0, 1.0)
+    ax_left.set_ylim(bottom=0.0)
+    ax_right.set_ylim(bottom=0.0)
+    ax_left.set_xlabel(r"BDT QCD score cut: keep $score_{QCD} \leq cut$", fontsize=AXIS_LABEL_SIZE)
+    ax_left.set_ylabel(str(spec["left_label"]), fontsize=AXIS_LABEL_SIZE, color=color_bb)
+    ax_right.set_ylabel(str(spec["right_label"]), fontsize=AXIS_LABEL_SIZE, color=color_cc)
+    ax_left.set_title(str(spec["title"]), fontsize=TITLE_SIZE)
+    ax_left.tick_params(labelsize=TICK_LABEL_SIZE, axis="y", colors=color_bb)
+    ax_right.tick_params(labelsize=TICK_LABEL_SIZE, axis="y", colors=color_cc)
+    ax_left.tick_params(labelsize=TICK_LABEL_SIZE, axis="x")
+    ax_left.grid(alpha=0.25)
+    ax_left.legend([line_bb, line_cc], [line_bb.get_label(), line_cc.get_label()], frameon=False, loc="best", fontsize=LEGEND_FONT_SIZE)
+    _cms_label(ax_left)
+    _save(fig, outpath)
+
+
+
+def plot_tth_qcd_cut_yield_scan(
+    outpath: Path,
+    scan_rows: list[dict[str, float]],
+    marked_cuts: list[dict[str, float]],
+) -> None:
+    _setup_style()
+    cuts = np.asarray([row["qcd_score_cut"] for row in scan_rows], dtype=np.float64)
+    fig, ax = plt.subplots(figsize=(7.6, 6.2))
+    for key, label, color in [
+        ("yield_ttHbb", r"ttH(H$\to$bb)", process_color("ttHbb", 0)),
+        ("yield_ttHcc", r"ttH(H$\to$cc)", process_color("ttHcc", 1)),
+        ("yield_qcd", "QCD", process_color("qcd", 2)),
+    ]:
+        values = np.asarray([row[key] for row in scan_rows], dtype=np.float64)
+        ax.plot(cuts, values, linewidth=2.0, label=label, color=color)
+    _draw_qcd_cut_markers(ax, marked_cuts)
+    positive = [row[key] for row in scan_rows for key in ["yield_ttHbb", "yield_ttHcc", "yield_qcd"] if row[key] > 0.0]
+    if positive:
+        ax.set_yscale("log")
+        ax.set_ylim(bottom=max(min(positive) * 0.5, 1e-12))
+    ax.set_xlim(0.0, 1.0)
+    ax.set_xlabel(r"BDT QCD score cut: keep $score_{QCD} \leq cut$", fontsize=AXIS_LABEL_SIZE)
+    ax.set_ylabel("Weighted yield in mSD window", fontsize=AXIS_LABEL_SIZE)
+    ax.tick_params(labelsize=TICK_LABEL_SIZE)
+    ax.grid(alpha=0.25)
+    ax.legend(frameon=False, loc="best", fontsize=LEGEND_FONT_SIZE)
+    _cms_label(ax)
+    _save(fig, outpath)
+
+
+
+def plot_tth_qcd_cut_signal_yield_scan(
+    outpath: Path,
+    scan_rows: list[dict[str, float]],
+    marked_cuts: list[dict[str, float]],
+) -> None:
+    _setup_style()
+    cuts = np.asarray([row["qcd_score_cut"] for row in scan_rows], dtype=np.float64)
+    tthbb = np.asarray([row["yield_ttHbb"] for row in scan_rows], dtype=np.float64)
+    tthcc = np.asarray([row["yield_ttHcc"] for row in scan_rows], dtype=np.float64)
+
+    fig, ax_left = plt.subplots(figsize=(7.8, 6.2))
+    ax_right = ax_left.twinx()
+    color_bb = process_color("ttHbb", 0)
+    color_cc = process_color("ttHcc", 1)
+    line_bb = ax_left.plot(cuts, tthbb, linewidth=2.0, label=r"ttH(H$\to$bb)", color=color_bb)[0]
+    line_cc = ax_right.plot(cuts, tthcc, linewidth=2.0, label=r"ttH(H$\to$cc)", color=color_cc)[0]
+    _draw_qcd_cut_markers(ax_left, marked_cuts)
+
+    ax_left.set_xlim(0.0, 1.0)
+    ax_left.set_ylim(bottom=0.0)
+    ax_right.set_ylim(bottom=0.0)
+    ax_left.set_xlabel(r"BDT QCD score cut: keep $score_{QCD} \leq cut$", fontsize=AXIS_LABEL_SIZE)
+    ax_left.set_ylabel("ttH(H->bb) weighted yield", fontsize=AXIS_LABEL_SIZE, color=color_bb)
+    ax_right.set_ylabel("ttH(H->cc) weighted yield", fontsize=AXIS_LABEL_SIZE, color=color_cc)
+    ax_left.tick_params(labelsize=TICK_LABEL_SIZE, axis="y", colors=color_bb)
+    ax_right.tick_params(labelsize=TICK_LABEL_SIZE, axis="y", colors=color_cc)
+    ax_left.tick_params(labelsize=TICK_LABEL_SIZE, axis="x")
+    ax_left.grid(alpha=0.25)
+    ax_left.legend([line_bb, line_cc], [line_bb.get_label(), line_cc.get_label()], frameon=False, loc="best", fontsize=LEGEND_FONT_SIZE)
+    _cms_label(ax_left)
+    _save(fig, outpath)
+
+
+
+def plot_qcd_cut_mass_shapes(
+    outpath: Path,
+    mass_values: np.ndarray,
+    qcd_scores: np.ndarray,
+    weights: np.ndarray,
+    cut_specs: list[dict[str, float]],
+    bins: np.ndarray,
+    mass_name: str,
+    process_label: str,
+) -> None:
+    _setup_style()
+    fig, (ax, ratio_ax) = plt.subplots(
+        nrows=2,
+        ncols=1,
+        figsize=(7.6, 7.0),
+        sharex=True,
+        gridspec_kw={"height_ratios": [3.0, 1.0], "hspace": 0.08},
+    )
+    valid_base = np.isfinite(mass_values) & np.isfinite(qcd_scores) & np.isfinite(weights) & (weights > 0.0)
+    base_counts, edges = np.histogram(mass_values[valid_base], bins=bins, weights=weights[valid_base])
+    centers = 0.5 * (edges[:-1] + edges[1:])
+    for index, cut_spec in enumerate(cut_specs):
+        cut = float(cut_spec["score_cut"])
+        target = float(cut_spec["target_qcd_drop_fraction"])
+        mask = valid_base & (qcd_scores <= cut)
+        if not np.any(mask):
+            continue
+        cut_counts, _ = np.histogram(mass_values[mask], bins=bins, weights=weights[mask])
+        density, density_edges = _weighted_density(mass_values[mask], weights[mask], bins)
+        density_centers = 0.5 * (density_edges[:-1] + density_edges[1:])
+        color = _class_color(index)
+        label = f"QCD drop {100.0 * target:.1f}%, cut={cut:.3f}"
+        ax.step(density_centers, density, where="mid", linewidth=1.55, color=color, label=label)
+        ratio = np.divide(
+            cut_counts,
+            base_counts,
+            out=np.full_like(cut_counts, np.nan, dtype=np.float64),
+            where=base_counts > 0.0,
+        )
+        ratio_ax.step(centers, ratio, where="mid", linewidth=1.35, color=color)
+    ax.set_ylabel("Unit-normalized weighted density", fontsize=AXIS_LABEL_SIZE)
+    ax.set_title(f"{process_label}: mass shape after QCD-score cuts", fontsize=TITLE_SIZE)
+    ax.tick_params(labelsize=TICK_LABEL_SIZE)
+    ax.grid(alpha=0.25)
+    ax.legend(frameon=False, loc="best", fontsize=max(7, LEGEND_FONT_SIZE - 1))
+    ratio_ax.set_xlabel(_display_label(mass_name), fontsize=AXIS_LABEL_SIZE)
+    ratio_ax.set_ylabel("Kept / all", fontsize=AXIS_LABEL_SIZE)
+    ratio_ax.set_ylim(0.0, 1.08)
+    ratio_ax.tick_params(labelsize=TICK_LABEL_SIZE)
+    ratio_ax.grid(alpha=0.25)
+    _cms_label(ax)
+    _save(fig, outpath)
+
+
+
+def plot_signal_mass_overlay(
+    outpath: Path,
+    mass_by_process: dict[str, np.ndarray],
+    weights_by_process: dict[str, np.ndarray],
+    bins: np.ndarray,
+    mass_name: str,
+    process_labels: dict[str, str],
+    stats_by_process: dict[str, dict[str, float]] | None = None,
+) -> None:
+    _setup_style()
+    fig, ax = plt.subplots(figsize=(7.6, 6.2))
+    annotation_lines: list[str] = []
+    for process in ["ttHbb", "ttHcc"]:
+        values = np.asarray(mass_by_process.get(process, []), dtype=np.float64)
+        weights = np.asarray(weights_by_process.get(process, []), dtype=np.float64)
+        valid = np.isfinite(values) & np.isfinite(weights) & (weights > 0.0)
+        if not np.any(valid):
+            continue
+        density, edges = _weighted_density(values[valid], weights[valid], bins)
+        centers = 0.5 * (edges[:-1] + edges[1:])
+        color = process_color(process, 0 if process == "ttHbb" else 1)
+        label = process_labels.get(process, process)
+        ax.step(centers, density, where="mid", linewidth=1.9, color=color, label=label)
+        if stats_by_process is not None and process in stats_by_process:
+            stats = stats_by_process[process]
+            annotation_lines.append(
+                f"{label}: mean={_format_annotation_value(stats.get('weighted_mean'))}, "
+                f"peak={_format_annotation_value(stats.get('peak_histogram_bin_center'))}, "
+                f"med={_format_annotation_value(stats.get('weighted_median'))}"
+            )
+            annotation_lines.append(
+                f"  half-width={_format_annotation_value(stats.get('half_width_q84_minus_q16'))}, "
+                f"res={_format_annotation_value(stats.get('relative_resolution'), 3)}"
+            )
+    ax.set_xlabel(_display_label(mass_name), fontsize=AXIS_LABEL_SIZE)
+    ax.set_ylabel("Unit-normalized weighted density", fontsize=AXIS_LABEL_SIZE)
+    ax.set_title("Signal mass peak and resolution", fontsize=TITLE_SIZE)
+    ax.tick_params(labelsize=TICK_LABEL_SIZE)
+    ax.grid(alpha=0.25)
+    ax.legend(frameon=False, loc="best", fontsize=LEGEND_FONT_SIZE)
+    if annotation_lines:
+        ax.text(
+            0.98,
+            0.96,
+            "\n".join(annotation_lines),
+            transform=ax.transAxes,
+            ha="right",
+            va="top",
+            fontsize=7.5,
+            bbox={"facecolor": "white", "alpha": 0.72, "edgecolor": "none", "pad": 3.0},
+        )
+    _cms_label(ax)
     _save(fig, outpath)

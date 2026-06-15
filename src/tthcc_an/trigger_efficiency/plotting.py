@@ -23,7 +23,7 @@ def _setup_style() -> None:
 
 def _cms_label(fig: plt.Figure) -> None:
     fig.text(0.015, 0.995, "CMS", ha="left", va="top", fontsize=16, fontweight="bold")
-    fig.text(0.090, 0.995, "Private Work", ha="left", va="top", fontsize=15)
+    fig.text(0.090, 0.995, "Simulation", ha="left", va="top", fontsize=15)
     fig.text(0.985, 0.995, "2024 (13.6 TeV)", ha="right", va="top", fontsize=15)
 
 

@@ -15,8 +15,14 @@ from tthcc_an.event_bdt.plotting import (
     plot_pairwise_roc_curve,
     plot_process_score_shapes,
     plot_process_score_weighted_events,
+    plot_qcd_cut_mass_shapes,
     plot_roc_curve,
     plot_score_vs_mass_grid,
+    plot_signal_mass_overlay,
+    plot_tth_process_roc_overlay,
+    plot_tth_qcd_cut_signal_yield_scan,
+    plot_tth_qcd_cut_significance_scan,
+    plot_tth_qcd_cut_yield_scan,
     plot_training_class_score_shapes,
     plot_training_class_score_weighted_events,
     plot_training_metric_curves,
@@ -35,7 +41,13 @@ MASS_DIAGNOSTIC_VARIABLES = [
     "TargetFatJet_msoftdrop",
     "CleanedJet_mass",
 ]
-MASS_DIAGNOSTIC_SCORE_NAMES = ["tth", "ttbar", "qcd"]
+TTH_SCORE_STUDY_MASS_VARIABLES = [
+    "TargetFatJet_msoftdrop",
+    "TargetFatJet_regressed_mass_generic",
+    "TargetFatJet_regressed_mass_x2p",
+]
+TTH_SCORE_STUDY_PROCESSES = ["ttHbb", "ttHcc", "ttbar", "qcd"]
+TTH_SCORE_STUDY_QCD_DROP_TARGETS = [0.70, 0.90, 0.95, 0.98, 0.99, 0.995, 0.999]
 MASS_RANGE_QUANTILES = (0.005, 0.995)
 CLASS_SCORE_DROP_TARGETS = [0.70, *[value / 100.0 for value in range(90, 100)], 0.995, 0.999]
 QCD_SCORE_DROP_TARGETS = CLASS_SCORE_DROP_TARGETS
@@ -700,6 +712,33 @@ def _mass_correlation_summary_path(config: EventBdtConfig) -> Path:
 
 
 
+def _mass_diagnostic_score_names(class_names: list[str], score_by_class: dict[str, np.ndarray]) -> list[str]:
+    return [class_name for class_name in class_names if class_name in score_by_class]
+
+
+
+def _tth_signal_score_class_by_process(score_by_class: dict[str, np.ndarray]) -> dict[str, str]:
+    if "tthbb" in score_by_class and "tthcc" in score_by_class:
+        return {"ttHbb": "tthbb", "ttHcc": "tthcc"}
+    if "tth" in score_by_class:
+        return {"ttHbb": "tth", "ttHcc": "tth"}
+    raise ValueError(
+        "Missing signal BDT score for ttH diagnostics. Expected either 'tth' or both 'tthbb' and 'tthcc'."
+    )
+
+
+
+def _tth_score_study_summary_paths(config: EventBdtConfig) -> tuple[Path, Path]:
+    base = config.outdir / "tth_score_study_summary"
+    return base.with_suffix(".txt"), base.with_suffix(".json")
+
+
+
+def _tth_score_study_plot_dir(config: EventBdtConfig) -> Path:
+    return config.plot_dir_path / "tth_score_study"
+
+
+
 def _validate_prepared_predictions_alignment(
     prepared_arrays: dict[str, np.ndarray],
     prediction_arrays: dict[str, np.ndarray],
@@ -809,7 +848,8 @@ def _build_mass_correlation_diagnostics(
 ) -> dict[str, object] | None:
     if not config.analysis_branches:
         return None
-    if any(score_name not in score_by_class for score_name in MASS_DIAGNOSTIC_SCORE_NAMES):
+    score_names = _mass_diagnostic_score_names(class_names, score_by_class)
+    if not score_names:
         return None
 
     _validate_prepared_predictions_alignment(prepared_arrays, prediction_arrays)
@@ -832,10 +872,10 @@ def _build_mass_correlation_diagnostics(
         "feature_variables": list(config.features),
         "mass_variables": list(MASS_DIAGNOSTIC_VARIABLES),
         "correlation_variables": required_columns,
-        "score_names": list(MASS_DIAGNOSTIC_SCORE_NAMES),
+        "score_names": list(score_names),
         "score_labels": {
             score_name: class_labels.get(score_name, score_name)
-            for score_name in MASS_DIAGNOSTIC_SCORE_NAMES
+            for score_name in score_names
         },
         "processes": [process for process in process_order if np.any(processes == process)],
         "mass_axis_ranges": {
@@ -857,7 +897,7 @@ def _build_mass_correlation_diagnostics(
         correlation_matrix = _weighted_correlation_matrix(correlation_columns, process_weight)
 
         score_mass_correlations: dict[str, object] = {}
-        for score_name in MASS_DIAGNOSTIC_SCORE_NAMES:
+        for score_name in score_names:
             score_row: dict[str, object] = {
                 "label": class_labels.get(score_name, score_name),
                 "mass_correlations": {},
@@ -898,6 +938,7 @@ def _write_mass_correlation_outputs(
     _write_json(summary_path, payload)
 
     correlation_variables = list(payload["correlation_variables"])
+    score_names = [str(name) for name in payload.get("score_names", [])]
     mass_ranges = {
         name: (
             float(payload["mass_axis_ranges"][name]["min"]),
@@ -920,11 +961,11 @@ def _write_mass_correlation_outputs(
             process_label=process_label,
             score_by_name={
                 score_name: np.asarray(score_by_class[score_name][process_mask], dtype=np.float64)
-                for score_name in MASS_DIAGNOSTIC_SCORE_NAMES
+                for score_name in score_names
             },
             score_labels={
                 score_name: class_labels.get(score_name, score_name)
-                for score_name in MASS_DIAGNOSTIC_SCORE_NAMES
+                for score_name in score_names
             },
             mass_by_name={
                 mass_name: np.asarray(prepared_arrays[mass_name][process_mask], dtype=np.float64)
@@ -936,6 +977,424 @@ def _write_mass_correlation_outputs(
         )
     return summary_path
 
+
+
+
+def _qcd_scan_marked_cuts(qcd_scan_payload: dict[str, object] | None) -> list[dict[str, float]]:
+    if qcd_scan_payload is None:
+        return []
+    marked: list[dict[str, float]] = []
+    for row in list(qcd_scan_payload.get("targets", [])):
+        try:
+            marked.append(
+                {
+                    "target_qcd_drop_fraction": float(row.get("target_signal_drop_fraction", row.get("target_qcd_drop_fraction"))),
+                    "score_cut": float(row["score_cut"]),
+                }
+            )
+        except (TypeError, KeyError, ValueError):
+            continue
+    return marked
+
+
+
+def _representative_qcd_cut_specs(qcd_scan_payload: dict[str, object] | None) -> list[dict[str, float]]:
+    marked = _qcd_scan_marked_cuts(qcd_scan_payload)
+    if not marked:
+        return [
+            {"target_qcd_drop_fraction": target, "score_cut": cut}
+            for target, cut in zip(TTH_SCORE_STUDY_QCD_DROP_TARGETS, [0.45, 0.35, 0.30, 0.25, 0.20, 0.15, 0.10], strict=False)
+        ]
+    selected: list[dict[str, float]] = []
+    for target in TTH_SCORE_STUDY_QCD_DROP_TARGETS:
+        matches = [row for row in marked if abs(float(row["target_qcd_drop_fraction"]) - target) < 1e-9]
+        if matches:
+            selected.append(matches[0])
+    return selected
+
+
+
+def _weighted_quantile_or_nan(values: np.ndarray, weights: np.ndarray, quantile: float) -> float:
+    valid = np.isfinite(values) & np.isfinite(weights) & (weights > 0.0)
+    if not np.any(valid):
+        return float("nan")
+    return float(weighted_quantile(values[valid], weights[valid], quantile))
+
+
+
+def _weighted_histogram_peak(values: np.ndarray, weights: np.ndarray, bins: np.ndarray) -> float:
+    valid = np.isfinite(values) & np.isfinite(weights) & (weights > 0.0)
+    if not np.any(valid):
+        return float("nan")
+    counts, edges = np.histogram(values[valid], bins=bins, weights=weights[valid])
+    if not np.any(counts > 0.0):
+        return float("nan")
+    index = int(np.argmax(counts))
+    return float(0.5 * (edges[index] + edges[index + 1]))
+
+
+
+def _signal_mass_statistics(values: np.ndarray, weights: np.ndarray, bins: np.ndarray) -> dict[str, float]:
+    valid = np.isfinite(values) & np.isfinite(weights) & (weights > 0.0)
+    valid_weight_sum = float(np.sum(weights[valid]))
+    mean = float(np.average(values[valid], weights=weights[valid])) if valid_weight_sum > 0.0 else float("nan")
+    median = _weighted_quantile_or_nan(values, weights, 0.50)
+    q16 = _weighted_quantile_or_nan(values, weights, 0.16)
+    q84 = _weighted_quantile_or_nan(values, weights, 0.84)
+    width = 0.5 * (q84 - q16) if np.isfinite(q16) and np.isfinite(q84) else float("nan")
+    return {
+        "weighted_yield": valid_weight_sum,
+        "weighted_mean": mean,
+        "peak_histogram_bin_center": _weighted_histogram_peak(values, weights, bins),
+        "weighted_median": median,
+        "weighted_q16": q16,
+        "weighted_q84": q84,
+        "half_width_q84_minus_q16": width,
+        "relative_resolution": width / median if np.isfinite(width) and np.isfinite(median) and median != 0.0 else float("nan"),
+    }
+
+
+
+def _mass_bins_for(values: np.ndarray, weights: np.ndarray, *, n_bins: int = 45) -> np.ndarray:
+    lower, upper = _weighted_axis_range(values, weights)
+    if not np.isfinite(lower) or not np.isfinite(upper) or lower >= upper:
+        lower, upper = 0.0, 250.0
+    padding = max((upper - lower) * 0.04, 1.0)
+    return np.linspace(lower - padding, upper + padding, n_bins + 1, dtype=np.float64)
+
+
+
+def _prepared_1d_float_array(
+    prepared_arrays: dict[str, np.ndarray],
+    name: str,
+    expected_size: int,
+) -> np.ndarray:
+    values = np.asarray(prepared_arrays[name], dtype=np.float64)
+    if values.ndim == 1:
+        if values.shape[0] != expected_size:
+            raise ValueError(
+                f"Prepared branch '{name}' has length {values.shape[0]}, expected {expected_size}."
+            )
+        return values
+    if values.shape[0] != expected_size:
+        raise ValueError(
+            f"Prepared branch '{name}' has shape {values.shape}, expected first axis {expected_size}."
+        )
+    squeezed = np.squeeze(values)
+    if squeezed.ndim == 1 and squeezed.shape[0] == expected_size:
+        return np.asarray(squeezed, dtype=np.float64)
+    raise ValueError(
+        f"Prepared branch '{name}' has shape {values.shape}; expected one scalar value per event. "
+        "For vector branches, add an indexed alias or flatten_first_branches entry before preparing."
+    )
+
+
+
+def _format_tth_score_study_text(payload: dict[str, object]) -> str:
+    lines = [
+        "BDT ttH score diagnostic study",
+        "",
+        "Signal score branches:",
+    ]
+    score_definitions = dict(payload.get("score_definitions", {}))
+    for process, score_branch in dict(score_definitions.get("roc_signal_score_by_process", {})).items():
+        lines.append(f"  {process}: {score_branch}")
+
+    lines.extend(["", "Process-pair ROC using per-process ttH signal scores:"])
+    for key, row in dict(payload.get("roc_pairs", {})).items():
+        lines.append(f"  {key}: AUC = {float(row['auc']):.6f}")
+
+    mass_window = dict(payload.get("mass_window", {}))
+    lines.extend(
+        [
+            "",
+            (
+                "mSD window: "
+                f"{float(mass_window.get('lower', float('nan'))):.1f} <= TargetFatJet_msoftdrop <= "
+                f"{float(mass_window.get('upper', float('nan'))):.1f} GeV"
+            ),
+        ]
+    )
+    for process, fraction in dict(mass_window.get("pass_fraction_by_process", {})).items():
+        lines.append(f"  {process}: pass fraction = {_format_fraction(float(fraction))}")
+
+    best_rows = dict(payload.get("qcd_cut_scan_best", {}))
+    lines.extend(["", "Best QCD-score cuts:"])
+    for key, row in best_rows.items():
+        metric_label = "S/sqrt(S+QCD)" if "s_plus_qcd" in key else "S/sqrt(QCD)"
+        lines.append(
+            f"  {key}: cut = {float(row['qcd_score_cut']):.4f}, "
+            f"{metric_label} = {float(row['value']):.6f}"
+        )
+
+    lines.extend(["", "Signal mass peak/resolution:"])
+    signal_summary = dict(payload.get("signal_mass_summary", {}))
+    for mass_name, process_rows in signal_summary.items():
+        lines.append(f"  {mass_name}:")
+        for process, row in dict(process_rows).items():
+            lines.append(
+                f"    {process}: mean = {_format_metric(float(row['weighted_mean'])).strip()}, "
+                f"peak = {_format_metric(float(row['peak_histogram_bin_center'])).strip()}, "
+                f"median = {_format_metric(float(row['weighted_median'])).strip()}, "
+                f"half-width = {_format_metric(float(row['half_width_q84_minus_q16'])).strip()}, "
+                f"rel. res = {_format_metric(float(row['relative_resolution'])).strip()}"
+            )
+    return "\n".join(lines) + "\n"
+
+
+
+def _write_tth_score_study_outputs(
+    *,
+    config: EventBdtConfig,
+    prediction_arrays: dict[str, np.ndarray],
+    prepared_arrays: dict[str, np.ndarray],
+    score_by_class: dict[str, np.ndarray],
+    processes: np.ndarray,
+    weights: np.ndarray,
+    process_labels: dict[str, str],
+    qcd_scan_payload: dict[str, object] | None,
+) -> tuple[Path, Path]:
+    signal_score_class_by_process = _tth_signal_score_class_by_process(score_by_class)
+    required_scores = ["qcd", *list(dict.fromkeys(signal_score_class_by_process.values()))]
+    missing_scores = [name for name in required_scores if name not in score_by_class]
+    if missing_scores:
+        raise ValueError(f"Missing BDT scores for ttH score diagnostics: {', '.join(missing_scores)}")
+
+    _validate_prepared_predictions_alignment(prepared_arrays, prediction_arrays)
+
+    missing_masses = [name for name in TTH_SCORE_STUDY_MASS_VARIABLES if name not in prepared_arrays]
+    if missing_masses:
+        raise ValueError(
+            "Prepared inputs are missing mass branches required for the ttH score study: "
+            f"{', '.join(missing_masses)}. Run: python scripts/run_event_bdt.py prepare "
+            f"--config {config.config_path} --force"
+        )
+
+    mass_by_name = {
+        name: _prepared_1d_float_array(prepared_arrays, name, len(processes))
+        for name in TTH_SCORE_STUDY_MASS_VARIABLES
+    }
+
+    from sklearn.metrics import roc_auc_score, roc_curve
+
+    plot_dir = _tth_score_study_plot_dir(config)
+    plot_dir.mkdir(parents=True, exist_ok=True)
+
+    qcd_score = np.asarray(score_by_class["qcd"], dtype=np.float64)
+    process_pairs = [
+        ("ttHbb", "qcd", "roc_tth_score__ttHbb_vs_qcd.png"),
+        ("ttHbb", "ttbar", "roc_tth_score__ttHbb_vs_ttbar.png"),
+        ("ttHcc", "qcd", "roc_tth_score__ttHcc_vs_qcd.png"),
+        ("ttHcc", "ttbar", "roc_tth_score__ttHcc_vs_ttbar.png"),
+    ]
+    roc_payload: dict[str, object] = {}
+    combined_curves: list[dict[str, object]] = []
+    output_plots: dict[str, str] = {}
+    for positive_process, negative_process, filename in process_pairs:
+        score_class = signal_score_class_by_process[positive_process]
+        signal_score = np.asarray(score_by_class[score_class], dtype=np.float64)
+        pair_mask = (processes == positive_process) | (processes == negative_process)
+        pair_mask &= np.isfinite(signal_score) & np.isfinite(weights) & (weights > 0.0)
+        if not np.any(pair_mask):
+            continue
+        pair_labels = (processes[pair_mask] == positive_process).astype(np.int8)
+        if not np.any(pair_labels == 1) or not np.any(pair_labels == 0):
+            continue
+        pair_scores = signal_score[pair_mask]
+        pair_weights = weights[pair_mask]
+        auc_value = float(roc_auc_score(pair_labels, pair_scores, sample_weight=pair_weights))
+        fpr, tpr, _ = roc_curve(pair_labels, pair_scores, sample_weight=pair_weights)
+        positive_label = process_labels.get(positive_process, positive_process)
+        negative_label = process_labels.get(negative_process, negative_process)
+        plot_pairwise_roc_curve(
+            plot_dir / filename,
+            scores=pair_scores,
+            labels=pair_labels,
+            weights=pair_weights,
+            positive_label=positive_label,
+            negative_label=negative_label,
+            auc_value=auc_value,
+        )
+        key = f"{positive_process}_vs_{negative_process}"
+        roc_payload[key] = {
+            "positive_process": positive_process,
+            "negative_process": negative_process,
+            "score": f"bdt_score_{score_class}",
+            "score_class": score_class,
+            "auc": auc_value,
+            "n_positive": int(np.sum(pair_labels == 1)),
+            "n_negative": int(np.sum(pair_labels == 0)),
+            "positive_weight_sum": float(np.sum(pair_weights[pair_labels == 1])),
+            "negative_weight_sum": float(np.sum(pair_weights[pair_labels == 0])),
+            "plot": str(plot_dir / filename),
+        }
+        output_plots[f"roc_{key}"] = str(plot_dir / filename)
+        combined_curves.append(
+            {
+                "signal_efficiency": tpr,
+                "background_rejection": 1.0 - fpr,
+                "label": f"{positive_label} vs {negative_label}",
+                "auc": auc_value,
+            }
+        )
+    if combined_curves:
+        combined_path = plot_dir / "roc_tth_score__process_pairs_combined.png"
+        plot_tth_process_roc_overlay(combined_path, combined_curves)
+        output_plots["roc_process_pairs_combined"] = str(combined_path)
+
+    mass_softdrop = mass_by_name["TargetFatJet_msoftdrop"]
+    mass_window_mask = np.isfinite(mass_softdrop) & (mass_softdrop >= 100.0) & (mass_softdrop <= 150.0)
+    pass_fraction_by_process = {}
+    for process in TTH_SCORE_STUDY_PROCESSES:
+        process_mask = processes == process
+        pass_fraction_by_process[process] = _safe_fraction(float(np.sum(process_mask & mass_window_mask)), float(np.sum(process_mask)))
+
+    scan_rows: list[dict[str, float]] = []
+    for cut in np.linspace(0.0, 1.0, 101, dtype=np.float64):
+        keep_mask = mass_window_mask & (qcd_score <= cut) & np.isfinite(qcd_score) & np.isfinite(weights) & (weights > 0.0)
+        yields = {
+            process: float(np.sum(weights[keep_mask & (processes == process)]))
+            for process in ["ttHbb", "ttHcc", "qcd"]
+        }
+        qcd_yield = yields["qcd"]
+        scan_rows.append(
+            {
+                "qcd_score_cut": float(cut),
+                "yield_ttHbb": yields["ttHbb"],
+                "yield_ttHcc": yields["ttHcc"],
+                "yield_qcd": qcd_yield,
+                "tthbb_s_over_sqrt_qcd": yields["ttHbb"] / np.sqrt(qcd_yield) if qcd_yield > 0.0 else float("nan"),
+                "tthcc_s_over_sqrt_qcd": yields["ttHcc"] / np.sqrt(qcd_yield) if qcd_yield > 0.0 else float("nan"),
+                "tthbb_s_over_sqrt_s_plus_qcd": yields["ttHbb"] / np.sqrt(yields["ttHbb"] + qcd_yield) if yields["ttHbb"] + qcd_yield > 0.0 else float("nan"),
+                "tthcc_s_over_sqrt_s_plus_qcd": yields["ttHcc"] / np.sqrt(yields["ttHcc"] + qcd_yield) if yields["ttHcc"] + qcd_yield > 0.0 else float("nan"),
+            }
+        )
+    marked_cuts = _qcd_scan_marked_cuts(qcd_scan_payload)
+    significance_path = plot_dir / "qcd_cut_scan__significance.png"
+    significance_s_plus_b_path = plot_dir / "qcd_cut_scan__significance_s_over_sqrt_s_plus_b.png"
+    yields_path = plot_dir / "qcd_cut_scan__yields.png"
+    signal_yields_path = plot_dir / "qcd_cut_scan__signal_yields_dual_axis.png"
+    plot_tth_qcd_cut_significance_scan(
+        significance_path,
+        scan_rows,
+        marked_cuts,
+        metric="s_over_sqrt_b",
+    )
+    plot_tth_qcd_cut_significance_scan(
+        significance_s_plus_b_path,
+        scan_rows,
+        marked_cuts,
+        metric="s_over_sqrt_s_plus_b",
+    )
+    plot_tth_qcd_cut_yield_scan(yields_path, scan_rows, marked_cuts)
+    plot_tth_qcd_cut_signal_yield_scan(signal_yields_path, scan_rows, marked_cuts)
+    output_plots["qcd_cut_scan_significance"] = str(significance_path)
+    output_plots["qcd_cut_scan_significance_s_over_sqrt_s_plus_b"] = str(significance_s_plus_b_path)
+    output_plots["qcd_cut_scan_yields"] = str(yields_path)
+    output_plots["qcd_cut_scan_signal_yields_dual_axis"] = str(signal_yields_path)
+
+    qcd_cut_best = {}
+    for key in [
+        "tthbb_s_over_sqrt_qcd",
+        "tthcc_s_over_sqrt_qcd",
+        "tthbb_s_over_sqrt_s_plus_qcd",
+        "tthcc_s_over_sqrt_s_plus_qcd",
+    ]:
+        finite_rows = [row for row in scan_rows if np.isfinite(float(row[key]))]
+        if finite_rows:
+            best = max(finite_rows, key=lambda row: float(row[key]))
+            qcd_cut_best[key] = {
+                "qcd_score_cut": float(best["qcd_score_cut"]),
+                "value": float(best[key]),
+            }
+
+    cut_specs = _representative_qcd_cut_specs(qcd_scan_payload)
+    mass_sculpting: dict[str, object] = {}
+    for mass_name in TTH_SCORE_STUDY_MASS_VARIABLES:
+        mass_values_all = mass_by_name[mass_name]
+        mass_sculpting[mass_name] = {}
+        for process in TTH_SCORE_STUDY_PROCESSES:
+            process_mask = processes == process
+            process_values = mass_values_all[process_mask]
+            process_weights = weights[process_mask]
+            bins = _mass_bins_for(process_values, process_weights)
+            outpath = plot_dir / f"mass_sculpting__{_safe_plot_name(mass_name)}__{process}.png"
+            plot_qcd_cut_mass_shapes(
+                outpath,
+                mass_values=process_values,
+                qcd_scores=qcd_score[process_mask],
+                weights=process_weights,
+                cut_specs=cut_specs,
+                bins=bins,
+                mass_name=mass_name,
+                process_label=process_labels.get(process, process),
+            )
+            mass_sculpting[mass_name][process] = {
+                "plot": str(outpath),
+                "n_events": int(np.sum(process_mask)),
+                "weight_sum": float(np.sum(process_weights[np.isfinite(process_weights)])),
+            }
+            output_plots[f"mass_sculpting_{_safe_plot_name(mass_name)}_{process}"] = str(outpath)
+
+    signal_mass_summary: dict[str, object] = {}
+    for mass_name in TTH_SCORE_STUDY_MASS_VARIABLES:
+        mass_values_all = mass_by_name[mass_name]
+        signal_mask = (processes == "ttHbb") | (processes == "ttHcc")
+        bins = _mass_bins_for(mass_values_all[signal_mask], weights[signal_mask])
+        mass_by_process = {}
+        weights_by_process = {}
+        signal_mass_summary[mass_name] = {}
+        for process in ["ttHbb", "ttHcc"]:
+            process_mask = processes == process
+            values = mass_values_all[process_mask]
+            process_weights = weights[process_mask]
+            mass_by_process[process] = values
+            weights_by_process[process] = process_weights
+            signal_mass_summary[mass_name][process] = _signal_mass_statistics(values, process_weights, bins)
+        outpath = plot_dir / f"signal_mass__{_safe_plot_name(mass_name)}.png"
+        plot_signal_mass_overlay(
+            outpath,
+            mass_by_process=mass_by_process,
+            weights_by_process=weights_by_process,
+            bins=bins,
+            mass_name=mass_name,
+            process_labels=process_labels,
+            stats_by_process=signal_mass_summary[mass_name],
+        )
+        output_plots[f"signal_mass_{_safe_plot_name(mass_name)}"] = str(outpath)
+
+    payload: dict[str, object] = {
+        "score_definitions": {
+            "roc_signal_score_by_process": {
+                process: f"bdt_score_{score_class}"
+                for process, score_class in signal_score_class_by_process.items()
+            },
+            "roc_signal_score_class_by_process": dict(signal_score_class_by_process),
+            "qcd_cut_score": "bdt_score_qcd",
+            "qcd_keep_region": "bdt_score_qcd <= cut",
+        },
+        "processes": list(TTH_SCORE_STUDY_PROCESSES),
+        "mass_variables": list(TTH_SCORE_STUDY_MASS_VARIABLES),
+        "mass_window": {
+            "variable": "TargetFatJet_msoftdrop",
+            "lower": 100.0,
+            "upper": 150.0,
+            "pass_fraction_by_process": pass_fraction_by_process,
+        },
+        "roc_pairs": roc_payload,
+        "qcd_cut_markers": marked_cuts,
+        "qcd_cut_scan": scan_rows,
+        "qcd_cut_scan_best": qcd_cut_best,
+        "mass_sculpting_cuts": cut_specs,
+        "mass_sculpting": mass_sculpting,
+        "signal_mass_summary": signal_mass_summary,
+        "plots": output_plots,
+    }
+
+    txt_path, json_path = _tth_score_study_summary_paths(config)
+    txt_path.write_text(_format_tth_score_study_text(payload), encoding="utf-8")
+    _write_json(json_path, payload)
+    return txt_path, json_path
 
 
 def _evaluate_outputs(config: EventBdtConfig) -> dict[str, object]:
@@ -1094,6 +1553,7 @@ def _evaluate_outputs(config: EventBdtConfig) -> dict[str, object]:
             trainable_mask=trainable_mask,
         )
         summary: dict[str, object] = {"weighted_macro_auc": weighted_macro_auc}
+        qcd_scan_payload: dict[str, object] | None = None
         if class_scan_payload is not None:
             txt_path, json_path = _class_score_threshold_scan_paths(config)
             txt_path.write_text(_format_class_score_threshold_scan_text(class_scan_payload), encoding="utf-8")
@@ -1141,6 +1601,19 @@ def _evaluate_outputs(config: EventBdtConfig) -> dict[str, object]:
                     class_labels=class_labels,
                 )
                 summary["mass_correlation_summary_json"] = str(summary_path)
+
+            tth_study_txt_path, tth_study_json_path = _write_tth_score_study_outputs(
+                config=config,
+                prediction_arrays=arrays,
+                prepared_arrays=prepared_arrays,
+                score_by_class=score_by_class,
+                processes=processes,
+                weights=weights,
+                process_labels=process_labels,
+                qcd_scan_payload=qcd_scan_payload,
+            )
+            summary["tth_score_study_summary_txt"] = str(tth_study_txt_path)
+            summary["tth_score_study_summary_json"] = str(tth_study_json_path)
         training_curve_paths = _write_training_curve_outputs(config, _load_training_summary(config))
         if training_curve_paths:
             summary["training_curve_plots"] = training_curve_paths
@@ -1253,6 +1726,8 @@ def main() -> None:
             print(f"Training curves: {', '.join(summary['training_curve_plots'])}")
         if "mass_correlation_summary_json" in summary:
             print(f"Mass correlation summary: {summary['mass_correlation_summary_json']}")
+        if "tth_score_study_summary_json" in summary:
+            print(f"ttH score study summary: {summary['tth_score_study_summary_json']}")
         return
 
     if args.command == "predict":
