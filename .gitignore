@@ -49,4 +49,4 @@ slurm-*.err
 *.stderr
 
 # Agents and temporary files
-AGENTS.md
+# AGENTS.md

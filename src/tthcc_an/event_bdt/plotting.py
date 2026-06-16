@@ -892,6 +892,115 @@ def plot_qcd_cut_mass_shapes(
 
 
 
+def plot_qcd_mass_variable_comparison(
+    outpath: Path,
+    mass_payloads: list[dict[str, object]],
+    *,
+    note_text: str = "QCD only, fine binning, common y-scale",
+    overlay: bool = False,
+) -> None:
+    _setup_style()
+    if not mass_payloads:
+        raise ValueError("At least one mass payload is required for QCD mass-shape comparison.")
+
+    prepared_payloads: list[tuple[np.ndarray, np.ndarray, dict[str, object]] | None] = []
+    global_max_density = 0.0
+    x_min = float("inf")
+    x_max = float("-inf")
+    for payload in mass_payloads:
+        values = np.asarray(payload["values"], dtype=np.float64)
+        weights = np.asarray(payload["weights"], dtype=np.float64)
+        bins = np.asarray(payload["bins"], dtype=np.float64)
+        valid = np.isfinite(values) & np.isfinite(weights) & (weights > 0.0)
+        x_min = min(x_min, float(bins[0]))
+        x_max = max(x_max, float(bins[-1]))
+        if not np.any(valid):
+            prepared_payloads.append(None)
+            continue
+        density, edges = _weighted_density(values[valid], weights[valid], bins)
+        centers = 0.5 * (edges[:-1] + edges[1:])
+        prepared_payloads.append((centers, density, payload))
+        finite_density = density[np.isfinite(density)]
+        if finite_density.size:
+            global_max_density = max(global_max_density, float(np.max(finite_density)))
+
+    if global_max_density <= 0.0:
+        global_max_density = 1.0
+
+    if overlay:
+        fig, ax = plt.subplots(figsize=(7.6, 6.0))
+        for index, prepared_payload in enumerate(prepared_payloads):
+            payload = mass_payloads[index]
+            mass_name = str(payload["mass_name"])
+            if prepared_payload is None:
+                continue
+            centers, density, _ = prepared_payload
+            ax.step(
+                centers,
+                density,
+                where="mid",
+                linewidth=1.8,
+                color=_class_color(index),
+                label=_display_label(mass_name).replace(" [GeV]", ""),
+            )
+        ax.set_xlim(x_min, x_max)
+        ax.set_ylim(0.0, global_max_density * 1.08)
+        ax.set_xlabel("TargetFatJet mass [GeV]", fontsize=AXIS_LABEL_SIZE)
+        ax.set_ylabel("Unit-normalized weighted density", fontsize=AXIS_LABEL_SIZE)
+        ax.tick_params(labelsize=TICK_LABEL_SIZE)
+        ax.grid(alpha=0.25)
+        ax.legend(frameon=False, loc="best", fontsize=LEGEND_FONT_SIZE)
+        ax.text(
+            0.02,
+            0.96,
+            note_text,
+            transform=ax.transAxes,
+            ha="left",
+            va="top",
+            fontsize=8.2,
+            bbox={"facecolor": "white", "alpha": 0.72, "edgecolor": "none", "pad": 2.5},
+        )
+        _cms_label(ax)
+        _save(fig, outpath)
+        return
+
+    fig, axes = plt.subplots(1, len(mass_payloads), figsize=(5.2 * len(mass_payloads), 4.8), sharey=True)
+    if len(mass_payloads) == 1:
+        axes = [axes]
+
+    qcd_color = process_color("qcd", 0)
+    for index, (ax, prepared_payload, payload) in enumerate(zip(axes, prepared_payloads, mass_payloads, strict=False)):
+        mass_name = str(payload["mass_name"])
+        bins = np.asarray(payload["bins"], dtype=np.float64)
+        if prepared_payload is None:
+            ax.text(0.5, 0.5, "No finite entries", ha="center", va="center", transform=ax.transAxes)
+        else:
+            centers, density, _ = prepared_payload
+            ax.step(centers, density, where="mid", linewidth=1.8, color=qcd_color)
+        ax.set_xlim(float(bins[0]), float(bins[-1]))
+        ax.set_xlabel(_display_label(mass_name), fontsize=AXIS_LABEL_SIZE)
+        ax.set_title(_display_label(mass_name).replace(" [GeV]", ""), fontsize=TITLE_SIZE)
+        ax.set_ylim(0.0, global_max_density * 1.08)
+        ax.tick_params(labelsize=TICK_LABEL_SIZE)
+        ax.grid(alpha=0.25)
+        if index == 0:
+            ax.set_ylabel("Unit-normalized weighted density", fontsize=AXIS_LABEL_SIZE)
+            _cms_label(ax)
+
+    axes[0].text(
+        0.02,
+        0.96,
+        note_text,
+        transform=axes[0].transAxes,
+        ha="left",
+        va="top",
+        fontsize=8.2,
+        bbox={"facecolor": "white", "alpha": 0.72, "edgecolor": "none", "pad": 2.5},
+    )
+    _save(fig, outpath)
+
+
+
 def plot_signal_mass_overlay(
     outpath: Path,
     mass_by_process: dict[str, np.ndarray],

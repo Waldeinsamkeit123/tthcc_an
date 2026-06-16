@@ -16,6 +16,7 @@ from tthcc_an.event_bdt.plotting import (
     plot_process_score_shapes,
     plot_process_score_weighted_events,
     plot_qcd_cut_mass_shapes,
+    plot_qcd_mass_variable_comparison,
     plot_roc_curve,
     plot_score_vs_mass_grid,
     plot_signal_mass_overlay,
@@ -300,6 +301,24 @@ def _format_metric(value: float) -> str:
 
 
 
+def _qcd_auxiliary_tth_class_names(class_names: list[str]) -> list[str]:
+    if "tth" in class_names:
+        return ["tth"]
+    return [class_name for class_name in class_names if class_name.startswith("tth")]
+
+
+
+def _qcd_auxiliary_tth_label(signal_names: list[str], class_labels: dict[str, str]) -> str:
+    if not signal_names:
+        return "ttH"
+    if signal_names == ["tth"]:
+        return str(class_labels.get("tth", "ttH"))
+    if set(signal_names) == {"tthbb", "tthcc"}:
+        return "ttH(bb+cc)"
+    return " + ".join(str(class_labels.get(name, name)) for name in signal_names)
+
+
+
 def _build_class_score_threshold_scan(
     *,
     class_names: list[str],
@@ -377,9 +396,17 @@ def _build_class_score_threshold_scan(
                     }
                 )
                 auxiliary_significances: dict[str, object] = {}
-                tth_index = class_index_by_name.get("tth")
-                if tth_index is not None:
-                    auxiliary_signal_mask = trainable_mask & (labels == tth_index)
+                auxiliary_signal_names = _qcd_auxiliary_tth_class_names(class_names)
+                if auxiliary_signal_names:
+                    auxiliary_signal_mask = np.zeros(labels.shape, dtype=bool)
+                    auxiliary_signal_labels = {}
+                    for signal_name in auxiliary_signal_names:
+                        signal_index = class_index_by_name.get(signal_name)
+                        if signal_index is None:
+                            continue
+                        auxiliary_signal_mask |= trainable_mask & (labels == signal_index)
+                        auxiliary_signal_labels[signal_name] = class_labels.get(signal_name, signal_name)
+
                     auxiliary_background_mask = np.zeros(labels.shape, dtype=bool)
                     background_names = []
                     background_labels = {}
@@ -390,17 +417,21 @@ def _build_class_score_threshold_scan(
                         auxiliary_background_mask |= trainable_mask & (labels == background_index)
                         background_names.append(background_name)
                         background_labels[background_name] = class_labels.get(background_name, background_name)
-                    auxiliary_signal_weight_keep = float(np.sum(weights[auxiliary_signal_mask & keep_mask]))
-                    auxiliary_background_weight_keep = float(np.sum(weights[auxiliary_background_mask & keep_mask]))
-                    auxiliary_significances["tth_vs_ttbar_plus_qcd"] = {
-                        "signal_class_name": "tth",
-                        "signal_class_label": class_labels.get("tth", "tth"),
-                        "background_class_names": background_names,
-                        "background_class_labels": background_labels,
-                        "signal_weight_total": float(np.sum(weights[auxiliary_signal_mask])),
-                        "background_weight_total": float(np.sum(weights[auxiliary_background_mask])),
-                        **_safe_significance(auxiliary_signal_weight_keep, auxiliary_background_weight_keep),
-                    }
+
+                    if np.any(auxiliary_signal_mask) and np.any(auxiliary_background_mask):
+                        auxiliary_signal_weight_keep = float(np.sum(weights[auxiliary_signal_mask & keep_mask]))
+                        auxiliary_background_weight_keep = float(np.sum(weights[auxiliary_background_mask & keep_mask]))
+                        auxiliary_significances["tth_vs_ttbar_plus_qcd"] = {
+                            "signal_class_name": auxiliary_signal_names[0] if len(auxiliary_signal_names) == 1 else "ttH_combined",
+                            "signal_class_label": _qcd_auxiliary_tth_label(auxiliary_signal_names, class_labels),
+                            "signal_class_names": auxiliary_signal_names,
+                            "signal_class_labels": auxiliary_signal_labels,
+                            "background_class_names": background_names,
+                            "background_class_labels": background_labels,
+                            "signal_weight_total": float(np.sum(weights[auxiliary_signal_mask])),
+                            "background_weight_total": float(np.sum(weights[auxiliary_background_mask])),
+                            **_safe_significance(auxiliary_signal_weight_keep, auxiliary_background_weight_keep),
+                        }
                 if auxiliary_significances:
                     target_payload["auxiliary_significances"] = auxiliary_significances
 
@@ -480,7 +511,7 @@ def _build_class_score_threshold_scan(
             "Thresholds are derived from the weighted score quantile in the corresponding trainable class.",
             "For tth and ttbar, keep region is score >= cut. For qcd, keep region is score <= cut.",
             "For each main score summary, S is the corresponding training class and B is every other trainable class.",
-            "The qcd section also includes an auxiliary ttH significance on the same QCD cut, with S=tth and B=ttbar+qcd.",
+            "The qcd section also includes an auxiliary ttH significance on the same QCD cut, with S=all ttH-like signal classes and B=ttbar+qcd.",
             "Because score values are discrete, the target class drop fraction and the actual strict/inclusive fractions can differ slightly at the threshold.",
             "Process-level rows are evaluated on all events in predictions.npz, including eval-only processes.",
             "Training-class rows are evaluated only on trainable events with labels >= 0.",
@@ -558,10 +589,20 @@ def _format_score_scan_section(score_payload: dict[str, object], *, title: str) 
         for row in targets
     )
     if has_auxiliary_qcd_tth:
+        first_auxiliary = None
+        for row in targets:
+            candidate = dict(row.get("auxiliary_significances", {})).get("tth_vs_ttbar_plus_qcd")
+            if candidate is not None:
+                first_auxiliary = dict(candidate)
+                break
+        auxiliary_signal_label = str((first_auxiliary or {}).get("signal_class_label", "ttH"))
+        auxiliary_background_labels = dict((first_auxiliary or {}).get("background_class_labels", {}))
+        auxiliary_background_text = "+".join(str(label) for label in auxiliary_background_labels.values()) or "ttbar+qcd"
         lines.extend(
             [
                 "",
                 "Auxiliary ttH significance on the same cut:",
+                f"S = {auxiliary_signal_label}, B = {auxiliary_background_text}",
                 (
                     f"{'Target drop':>12}  {'Score cut':>10}  {'S kept':>12}  {'B kept':>12}  "
                     f"{'S/B':>12}  {'S/sqrt(S+B)':>14}  {'S/sqrt(B)':>12}"
@@ -632,7 +673,7 @@ def _format_class_score_threshold_scan_text(payload: dict[str, object]) -> str:
         "Keep/drop direction depends on the score.",
         "For tth and ttbar, keep region is score >= cut. For qcd, keep region is score <= cut.",
         "For each main score summary, S is the corresponding training class and B is every other trainable class.",
-        "The qcd section also includes an auxiliary ttH significance with S=tth and B=ttbar+qcd.",
+        "The qcd section also includes an auxiliary ttH significance with S=all ttH-like signal classes and B=ttbar+qcd.",
         "",
     ]
     scores = dict(payload.get("scores", {}))
@@ -1100,6 +1141,13 @@ def _format_tth_score_study_text(payload: dict[str, object]) -> str:
     for process, score_branch in dict(score_definitions.get("roc_signal_score_by_process", {})).items():
         lines.append(f"  {process}: {score_branch}")
 
+    lines.extend(["", "QCD-cut significance definitions:"])
+    for metric_name, definition in dict(score_definitions.get("qcd_cut_significance_definitions", {})).items():
+        signal_text = "+".join(definition.get("signal_processes", [])) or "unknown"
+        background_text = "+".join(definition.get("background_processes", [])) or "unknown"
+        formula = str(definition.get("formula", "metric"))
+        lines.append(f"  {metric_name}: {formula}, S={signal_text}, B={background_text}")
+
     lines.extend(["", "Process-pair ROC using per-process ttH signal scores:"])
     for key, row in dict(payload.get("roc_pairs", {})).items():
         lines.append(f"  {key}: AUC = {float(row['auc']):.6f}")
@@ -1117,6 +1165,14 @@ def _format_tth_score_study_text(payload: dict[str, object]) -> str:
     )
     for process, fraction in dict(mass_window.get("pass_fraction_by_process", {})).items():
         lines.append(f"  {process}: pass fraction = {_format_fraction(float(fraction))}")
+
+    qcd_mass_shape_comparison = dict(payload.get("qcd_mass_shape_comparison", {}))
+    if qcd_mass_shape_comparison:
+        lines.extend(["", f"QCD fine-binning shape comparison: {qcd_mass_shape_comparison.get('plot', '')}"])
+
+    qcd_mass_shape_comparison_higgs_window = dict(payload.get("qcd_mass_shape_comparison_higgs_window", {}))
+    if qcd_mass_shape_comparison_higgs_window:
+        lines.extend(["", f"QCD fine-binning shape comparison in 100-150 GeV window: {qcd_mass_shape_comparison_higgs_window.get('plot', '')}"])
 
     best_rows = dict(payload.get("qcd_cut_scan_best", {}))
     lines.extend(["", "Best QCD-score cuts:"])
@@ -1336,6 +1392,77 @@ def _write_tth_score_study_outputs(
             }
             output_plots[f"mass_sculpting_{_safe_plot_name(mass_name)}_{process}"] = str(outpath)
 
+    qcd_mass_shape_comparison: dict[str, object] = {}
+    qcd_mass_shape_comparison_higgs_window: dict[str, object] = {}
+    qcd_mask = processes == "qcd"
+    if np.any(qcd_mask):
+        comparison_payloads: list[dict[str, object]] = []
+        variable_summaries: dict[str, object] = {}
+        qcd_weights = weights[qcd_mask]
+        for mass_name in TTH_SCORE_STUDY_MASS_VARIABLES:
+            qcd_values = mass_by_name[mass_name][qcd_mask]
+            bins = _mass_bins_for(qcd_values, qcd_weights, n_bins=90)
+            comparison_payloads.append(
+                {
+                    "mass_name": mass_name,
+                    "values": qcd_values,
+                    "weights": qcd_weights,
+                    "bins": bins,
+                }
+            )
+            variable_summaries[mass_name] = {
+                "n_bins": int(len(bins) - 1),
+                "x_min": float(bins[0]),
+                "x_max": float(bins[-1]),
+                "weight_sum": float(np.sum(qcd_weights[np.isfinite(qcd_weights)])),
+            }
+        qcd_comparison_path = plot_dir / "qcd_mass_shape_comparison__fine_binning.png"
+        plot_qcd_mass_variable_comparison(qcd_comparison_path, comparison_payloads)
+        qcd_mass_shape_comparison = {
+            "plot": str(qcd_comparison_path),
+            "process": "qcd",
+            "normalization": "unit-normalized weighted density",
+            "common_y_scale": True,
+            "variables": variable_summaries,
+        }
+        output_plots["qcd_mass_shape_comparison_fine_binning"] = str(qcd_comparison_path)
+
+        comparison_payloads_higgs_window: list[dict[str, object]] = []
+        variable_summaries_higgs_window: dict[str, object] = {}
+        fixed_window_bins = np.linspace(100.0, 150.0, 101, dtype=np.float64)
+        for mass_name in TTH_SCORE_STUDY_MASS_VARIABLES:
+            qcd_values = mass_by_name[mass_name][qcd_mask]
+            comparison_payloads_higgs_window.append(
+                {
+                    "mass_name": mass_name,
+                    "values": qcd_values,
+                    "weights": qcd_weights,
+                    "bins": fixed_window_bins,
+                }
+            )
+            variable_summaries_higgs_window[mass_name] = {
+                "n_bins": int(len(fixed_window_bins) - 1),
+                "x_min": float(fixed_window_bins[0]),
+                "x_max": float(fixed_window_bins[-1]),
+                "weight_sum": float(np.sum(qcd_weights[np.isfinite(qcd_weights)])),
+            }
+        qcd_comparison_window_path = plot_dir / "qcd_mass_shape_comparison__fine_binning__window_100_150.png"
+        plot_qcd_mass_variable_comparison(
+            qcd_comparison_window_path,
+            comparison_payloads_higgs_window,
+            note_text="QCD only, fine binning, 100-150 GeV x-range, common y-scale",
+            overlay=True,
+        )
+        qcd_mass_shape_comparison_higgs_window = {
+            "plot": str(qcd_comparison_window_path),
+            "process": "qcd",
+            "normalization": "unit-normalized weighted density",
+            "common_y_scale": True,
+            "x_window": {"min": 100.0, "max": 150.0},
+            "variables": variable_summaries_higgs_window,
+        }
+        output_plots["qcd_mass_shape_comparison_fine_binning_window_100_150"] = str(qcd_comparison_window_path)
+
     signal_mass_summary: dict[str, object] = {}
     for mass_name in TTH_SCORE_STUDY_MASS_VARIABLES:
         mass_values_all = mass_by_name[mass_name]
@@ -1372,6 +1499,28 @@ def _write_tth_score_study_outputs(
             "roc_signal_score_class_by_process": dict(signal_score_class_by_process),
             "qcd_cut_score": "bdt_score_qcd",
             "qcd_keep_region": "bdt_score_qcd <= cut",
+            "qcd_cut_significance_definitions": {
+                "tthbb_s_over_sqrt_qcd": {
+                    "formula": "S/sqrt(B)",
+                    "signal_processes": ["ttHbb"],
+                    "background_processes": ["qcd"],
+                },
+                "tthcc_s_over_sqrt_qcd": {
+                    "formula": "S/sqrt(B)",
+                    "signal_processes": ["ttHcc"],
+                    "background_processes": ["qcd"],
+                },
+                "tthbb_s_over_sqrt_s_plus_qcd": {
+                    "formula": "S/sqrt(S+B)",
+                    "signal_processes": ["ttHbb"],
+                    "background_processes": ["qcd"],
+                },
+                "tthcc_s_over_sqrt_s_plus_qcd": {
+                    "formula": "S/sqrt(S+B)",
+                    "signal_processes": ["ttHcc"],
+                    "background_processes": ["qcd"],
+                },
+            },
         },
         "processes": list(TTH_SCORE_STUDY_PROCESSES),
         "mass_variables": list(TTH_SCORE_STUDY_MASS_VARIABLES),
@@ -1387,6 +1536,8 @@ def _write_tth_score_study_outputs(
         "qcd_cut_scan_best": qcd_cut_best,
         "mass_sculpting_cuts": cut_specs,
         "mass_sculpting": mass_sculpting,
+        "qcd_mass_shape_comparison": qcd_mass_shape_comparison,
+        "qcd_mass_shape_comparison_higgs_window": qcd_mass_shape_comparison_higgs_window,
         "signal_mass_summary": signal_mass_summary,
         "plots": output_plots,
     }

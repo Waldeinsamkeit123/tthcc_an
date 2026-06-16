@@ -291,7 +291,7 @@ def _build_xbb_vs_xcc_contour_region_definitions(preset: str) -> dict[str, dict[
     preset_payload = XBB_VS_XCC_REGION_PRESETS[preset_key]
     hcc_x_cut = float(preset_payload["hcc_x_cut"])
     hbb_x_cut = float(preset_payload["hbb_x_cut"])
-    annotation_x = 0.945
+    annotation_x = 0.965
     return {
         "qcd_others": {
             "label": "QCD&Others region",
@@ -304,7 +304,7 @@ def _build_xbb_vs_xcc_contour_region_definitions(preset: str) -> dict[str, dict[
             "x_min_exclusive": hcc_x_cut,
             "y_min_exclusive": 0.0,
             "y_max_inclusive": 0.85,
-            "annotation": {"x": annotation_x, "y": 0.68},
+            "annotation": {"x": annotation_x, "y": 0.68, "ha": "right"},
         },
         "hbb": {
             "label": "Hbb region",
@@ -312,7 +312,7 @@ def _build_xbb_vs_xcc_contour_region_definitions(preset: str) -> dict[str, dict[
             "x_min_exclusive": hbb_x_cut,
             "y_min_exclusive": 0.85,
             "y_max_inclusive": 1.0,
-            "annotation": {"x": annotation_x, "y": 0.95},
+            "annotation": {"x": annotation_x, "y": 0.95, "ha": "right"},
         },
     }
 

@@ -426,18 +426,21 @@ def _annotate_globalpart3_regions(
             str(region_definitions.get("qcd_others", {}).get("label", "QCD&Others region")),
             float(region_definitions.get("qcd_others", {}).get("annotation", {}).get("x", 0.15)),
             float(region_definitions.get("qcd_others", {}).get("annotation", {}).get("y", 0.80)),
+            str(region_definitions.get("qcd_others", {}).get("annotation", {}).get("ha", "left")),
         ),
         (
             "hcc",
             str(region_definitions.get("hcc", {}).get("label", "Hcc region")),
             float(region_definitions.get("hcc", {}).get("annotation", {}).get("x", 0.55)),
             float(region_definitions.get("hcc", {}).get("annotation", {}).get("y", 0.65)),
+            str(region_definitions.get("hcc", {}).get("annotation", {}).get("ha", "left")),
         ),
         (
             "hbb",
             str(region_definitions.get("hbb", {}).get("label", "Hbb region")),
             float(region_definitions.get("hbb", {}).get("annotation", {}).get("x", 0.78)),
             float(region_definitions.get("hbb", {}).get("annotation", {}).get("y", 0.88)),
+            str(region_definitions.get("hbb", {}).get("annotation", {}).get("ha", "left")),
         ),
     ]
     category_styles = [
@@ -450,14 +453,14 @@ def _annotate_globalpart3_regions(
     value_fontsize = max(plot_style.tick_size - 0.2, 8.5)
     line_spacing = 0.045
 
-    for region_key, title, x_pos, y_pos in annotation_specs:
+    for region_key, title, x_pos, y_pos, horizontal_alignment in annotation_specs:
         ax.text(
             x_pos,
             y_pos,
             title,
             color=CONTOUR_REGION_LINE_COLOR,
             fontsize=title_fontsize,
-            ha="left",
+            ha=horizontal_alignment,
             va="top",
             zorder=9.0,
         )
@@ -469,7 +472,7 @@ def _annotate_globalpart3_regions(
                 _format_region_efficiency(float(region_map.get(category_key, float("nan")))),
                 color=color,
                 fontsize=value_fontsize,
-                ha="left",
+                ha=horizontal_alignment,
                 va="top",
                 zorder=9.0,
             )

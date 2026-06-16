@@ -190,9 +190,9 @@ Available configs in this repository:
 
 - [config/samples.example.json](/eos/user/h/hanw/ttHcc/tthcc_an/config/samples.example.json)
 - [config/samples_2024_add_nonttbarmatch_allmc.json](/eos/user/h/hanw/ttHcc/tthcc_an/config/samples_2024_add_nonttbarmatch_allmc.json)
-- [config/event_bdt/samples_2024_0l_v1.json](/eos/user/h/hanw/ttHcc/tthcc_an/config/event_bdt/samples_2024_0l_v1.json)
-- [config/event_bdt/train_ttHcc_0l_baseline.json](/eos/user/h/hanw/ttHcc/tthcc_an/config/event_bdt/train_ttHcc_0l_baseline.json)
-- [config/event_bdt/train_ttHcc_0l_smoke.json](/eos/user/h/hanw/ttHcc/tthcc_an/config/event_bdt/train_ttHcc_0l_smoke.json)
+- [config/event_bdt/samples_2024_0l_jecs_v1.json](/eos/user/h/hanw/ttHcc/tthcc_an/config/event_bdt/samples_2024_0l_jecs_v1.json)
+- [config/event_bdt/train_ttHcc_0l_3class_baseline_jecs.json](/eos/user/h/hanw/ttHcc/tthcc_an/config/event_bdt/train_ttHcc_0l_3class_baseline_jecs.json)
+- [config/event_bdt/train_ttHcc_0l_4class_baseline_jecs.json](/eos/user/h/hanw/ttHcc/tthcc_an/config/event_bdt/train_ttHcc_0l_4class_baseline_jecs.json)
 
 The 2024 config already contains:
 
@@ -269,6 +269,21 @@ python scripts/run_boosted_higgs_tagger_study.py \
   --outdir outputs/boosted_higgs_tagger_study_2024_tight
 ```
 
+Current plot-only refresh for the existing tight study cache at
+`outputs/boosted_higgs_tagger_study_2024_tight_20260525`:
+
+```bash
+source /cvmfs/sft.cern.ch/lcg/views/LCG_108/x86_64-el9-gcc15-opt/setup.sh
+cd /eos/user/h/hanw/ttHcc/tthcc_an
+
+python scripts/run_boosted_higgs_tagger_study.py \
+  --config config/samples_2024_add_nonttbarmatch_allmc.json \
+  --plot-only \
+  --plot-input outputs/boosted_higgs_tagger_study_2024_tight_20260525/plot_input.npz \
+  --outdir outputs/boosted_higgs_tagger_study_2024_tight_20260525 \
+  --xbb-vs-xcc-region-preset tight
+```
+
 Recommended chunked Condor rerun for the same study:
 
 ```bash
@@ -287,17 +302,15 @@ python scripts/submit_boosted_higgs_tagger_condor.py \
 
 ## 0L Event-BDT Prototype
 
-The repository also contains a prototype event-level BDT workflow for the 2024
-`0L` study:
+The repository also contains an actively used event-level BDT workflow for the
+2024 `0L` study on the JEC-updated event ntuples:
 
-- training sample config: [config/event_bdt/samples_2024_0l_v1.json](/eos/user/h/hanw/ttHcc/tthcc_an/config/event_bdt/samples_2024_0l_v1.json)
-- predict-only full-sample config: [config/event_bdt/samples_2024_0l_v1_predict_all.json](/eos/user/h/hanw/ttHcc/tthcc_an/config/event_bdt/samples_2024_0l_v1_predict_all.json)
-- recommended 3-class baseline: [config/event_bdt/train_ttHcc_0l_3class_baseline.json](/eos/user/h/hanw/ttHcc/tthcc_an/config/event_bdt/train_ttHcc_0l_3class_baseline.json)
-- recommended 3-class smoke test: [config/event_bdt/train_ttHcc_0l_3class_smoke.json](/eos/user/h/hanw/ttHcc/tthcc_an/config/event_bdt/train_ttHcc_0l_3class_smoke.json)
-- 5-class example baseline: [config/event_bdt/train_ttHcc_0l_baseline.json](/eos/user/h/hanw/ttHcc/tthcc_an/config/event_bdt/train_ttHcc_0l_baseline.json)
+- training sample config: [config/event_bdt/samples_2024_0l_jecs_v1.json](/eos/user/h/hanw/ttHcc/tthcc_an/config/event_bdt/samples_2024_0l_jecs_v1.json)
+- current 3-class baseline: [config/event_bdt/train_ttHcc_0l_3class_baseline_jecs.json](/eos/user/h/hanw/ttHcc/tthcc_an/config/event_bdt/train_ttHcc_0l_3class_baseline_jecs.json)
+- current 4-class baseline: [config/event_bdt/train_ttHcc_0l_4class_baseline_jecs.json](/eos/user/h/hanw/ttHcc/tthcc_an/config/event_bdt/train_ttHcc_0l_4class_baseline_jecs.json)
 - CLI: [scripts/run_event_bdt.py](/eos/user/h/hanw/ttHcc/tthcc_an/scripts/run_event_bdt.py:1)
 
-Current scope of the prototype:
+Current scope of the workflow:
 
 - channel: `0L`
 - classification is defined by `study.training_classes`
@@ -307,26 +320,28 @@ Current scope of the prototype:
   - `group`: `signal` or `background`, used for binary fallback and reweighting
   - `processes`: the sample-process names assigned to that class
 - eval-only samples remain outside training and can still appear in process-level plots through `study.eval_processes_extra`
-- data source: Pepper-produced `Events` trees under `/eos/user/h/hanw/ttHcc/pepper_data/2024/0L_v1_event`
+- data source: Pepper-produced `Events` trees under `/eos/user/h/hanw/ttHcc/pepper_data/2024/JECs_v1_events`
+- normalization metadata: `/eos/user/h/hanw/ttHcc/pepper_data/2024/JECs_v1/gen_sumws.json`
 
-The current `samples_2024_0l_v1.json` has `W+jets`, `Z+jets`, `ttV`, and `single top`
-commented out, so the shipped `3class` configs are the recommended ones for the
-present sample list:
+The current `samples_2024_0l_jecs_v1.json` keeps these processes active:
 
-- `tth -> ttHbb + ttHcc`
-- `ttbar -> ttbar + ttbb + ttll`
-- `qcd -> qcd`
-- `ttH_nonbb` stays `eval_only`
+- `qcd`
+- `ttbar`
+- `ttHbb`
+- `ttHcc`
+- `ttH_nonbb` as `eval_only`
 
-The `5-class` example configs are still kept in the repository. To use them,
-re-enable the additional background samples in the training sample config and
-assign them through `study.training_classes`.
+Wider backgrounds such as `W+jets`, `Z+jets`, `ttV`, `single top`, `ttbb`, and
+`ttll` are still kept in the JSON as commented entries. The training-class
+definitions already allow `ttbb` / `ttll`, so if you uncomment them in the
+sample config they automatically flow into the `ttbar` class.
 
-For scoring after training, use the dedicated `predict_all` sample config rather
-than the training sample config. It includes all currently available MC
-components under `0L_v1_event` plus the `JetMET` and `ParkingHH` data streams.
-The training configs are intentionally narrower; if you uncomment extra MC there
-without also assigning them to a training class, training will fail by design.
+Two multiclass setups are currently maintained:
+
+- `3-class`: `tth = ttHbb + ttHcc`, `ttbar = ttbar + ttbb + ttll`, `qcd = qcd`
+  with output `outputs/event_bdt_ttHcc_0l_3class_baseline_jecs_v3`
+- `4-class`: `tthbb = ttHbb`, `tthcc = ttHcc`, `ttbar = ttbar + ttbb + ttll`,
+  `qcd = qcd` with output `outputs/event_bdt_ttHcc_0l_4class_baseline_jecs_v1`
 
 The baseline configs use the same simple `0L` preselection:
 
@@ -334,13 +349,24 @@ The baseline configs use the same simple `0L` preselection:
 - `TargetFatJet_pt >= 300`
 - `|TargetFatJet_eta| <= 2.4`
 
-The first-pass features mix event-level and target-fatjet observables such as:
+Both active configs currently use:
+
+- `k_folds = 5`
+- reweighting in `TargetFatJet_pt`, `HT`, and `CleanedHT`
+- analysis branches `TargetFatJet_msoftdrop`,
+  `TargetFatJet_regressed_mass_generic`, and
+  `TargetFatJet_regressed_mass_x2p`
+
+The current feature set mixes event-level, jet-level, and target-fatjet
+observables such as:
 
 - `MET_pt`, `HT`, `CleanedHT`
 - `Cleaned_HTb`, `Cleaned_HTc`, `Cleaned_HTcb`
 - `CleanedJet_nbtag`, `CleanedJet_nctag`, `ncleanedjet`
+- leading cleaned jets `CleanedJet_pt__1..4` and `CleanedJet_tag__1..4`
 - `TargetFatJet_pt`, `TargetFatJet_bbtagged`, `TargetFatJet_cctagged`
-- `minDR_b`, `mass_minDR_b`, `maxMass_b`, `DR_Tarb1`, `DR_Tarb2`, `minDR_TarClean`
+- `minDR_b`, `DR_Tarb1`, `DR_Tarb2`, `minDR_TarClean`,
+  `minDEta_TarClean`, `minDPhi_TarClean`
 
 XGBoost configuration is now driven from `study.training_classes`:
 
@@ -353,7 +379,7 @@ XGBoost configuration is now driven from `study.training_classes`:
 
 ### Event-BDT Commands
 
-Recommended full `3-class` workflow with the current sample list:
+Recommended current `3-class` workflow:
 
 1. set up the runtime environment and enter the repository:
 
@@ -362,61 +388,46 @@ source /cvmfs/sft.cern.ch/lcg/views/LCG_108/x86_64-el9-gcc15-opt/setup.sh
 cd /eos/user/h/hanw/ttHcc/tthcc_an
 ```
 
-2. optionally build or refresh the prepared cache first:
-
-```bash
-python scripts/run_event_bdt.py prepare --config config/event_bdt/train_ttHcc_0l_3class_baseline.json
-```
-
-3. run the full three-class training:
-
-```bash
-python scripts/run_event_bdt.py train --config config/event_bdt/train_ttHcc_0l_3class_baseline.json
-```
-
-4. if the ntuples, selection, features, or config changed and you want a clean rerun, force both cache and model regeneration:
-
-```bash
-python scripts/run_event_bdt.py train --config config/event_bdt/train_ttHcc_0l_3class_baseline.json --force-prepare --force-retrain
-```
-
-5. redraw the ROC and score-shape plots from the saved prediction payload:
-
-```bash
-python scripts/run_event_bdt.py evaluate --config config/event_bdt/train_ttHcc_0l_3class_baseline.json
-```
-
-6. if you need scores on the same narrow sample list used for training, run prediction after training:
-
-```bash
-python scripts/run_event_bdt.py predict --config config/event_bdt/train_ttHcc_0l_3class_baseline.json
-```
-
-7. if you want to score all available MC components and the shipped data streams, use the predict-only sample config:
+2. build or refresh the prepared cache when branches or selections changed:
 
 ```bash
 python scripts/run_event_bdt.py \
-  predict \
-  --config config/event_bdt/train_ttHcc_0l_3class_baseline.json \
-  --samples-config config/event_bdt/samples_2024_0l_v1_predict_all.json \
-  --outdir outputs/event_bdt_ttHcc_0l_3class_baseline/scored_root_all
+  prepare \
+  --config config/event_bdt/train_ttHcc_0l_3class_baseline_jecs.json \
+  --force
 ```
 
-Add `--score-all-events` if you want to score every event instead of only those passing `base_selection`.
-
-Quick smoke-test run for code and environment validation:
+3. run the current `3-class` training:
 
 ```bash
-source /cvmfs/sft.cern.ch/lcg/views/LCG_108/x86_64-el9-gcc15-opt/setup.sh
-cd /eos/user/h/hanw/ttHcc/tthcc_an
-
-python scripts/run_event_bdt.py train --config config/event_bdt/train_ttHcc_0l_3class_smoke.json
-python scripts/run_event_bdt.py evaluate --config config/event_bdt/train_ttHcc_0l_3class_smoke.json
+python scripts/run_event_bdt.py \
+  train \
+  --config config/event_bdt/train_ttHcc_0l_3class_baseline_jecs.json
 ```
 
-If you later re-enable more background processes and want a wider class definition,
-prefer editing `study.training_classes` in a copied config rather than changing
-code paths.
+4. redraw the `3-class` diagnostics from the saved payloads:
+
+```bash
+python scripts/run_event_bdt.py \
+  evaluate \
+  --config config/event_bdt/train_ttHcc_0l_3class_baseline_jecs.json
+```
+
+5. run the analogous `4-class` training or refresh its evaluation products:
+
+```bash
+python scripts/run_event_bdt.py \
+  train \
+  --config config/event_bdt/train_ttHcc_0l_4class_baseline_jecs.json
+
+python scripts/run_event_bdt.py \
+  evaluate \
+  --config config/event_bdt/train_ttHcc_0l_4class_baseline_jecs.json
+```
+
+`evaluate` does not retrain. It redraws from the saved `predictions.npz`,
+`prepared_inputs.npz`, and `training_summary.json`, so it can also regenerate
+the training-curve plots for older runs after code-only plotting updates.
 
 ### Event-BDT Outputs
 
@@ -428,6 +439,8 @@ For a standard multiclass event-BDT training run, the output directory contains:
 - `feature_importance.json`
 - `mass_correlation_summary.json` when `study.analysis_branches` is configured and the corresponding branches are present in `prepared_inputs.npz`
 - `models/*.json`
+- `plots/training_curve__mlogloss.png`
+- `plots/training_curve__merror.png`
 - `plots/roc_ovr.png`
 - `plots/score_by_training_class__<class>.png` for each configured training class
 - `plots/score_by_training_class_weighted_events__<class>.png` for each configured training class
@@ -437,34 +450,41 @@ For a standard multiclass event-BDT training run, the output directory contains:
 - `plots/score_by_process_weighted_events__<class>_logy.png` for each configured training class
 - `plots/feature_mass_correlation__<process>.png` for each process in the prepared/prediction payload when `study.analysis_branches` is configured
 - `plots/score_vs_mass__<process>.png` for each process in the prepared/prediction payload when `study.analysis_branches` is configured
+- `class_score_threshold_scan.txt` and `class_score_threshold_scan.json`
 - `qcd_score_threshold_scan.txt` and `qcd_score_threshold_scan.json` when the multiclass config contains a `qcd` training class
+- `plots/tth_score_study/*`, `tth_score_study_summary.txt`, and `tth_score_study_summary.json` for the current multiclass JECs studies
 
-Legacy binary configs still produce the old `roc_oof.png`, `score_signal_vs_background.png`, `score_by_process.png`, and `score_tth_family.png` outputs.
+The threshold-scan products follow the current analysis semantics:
 
-When `predict` is run, it additionally writes:
+- `signal-like` class scans keep `score >= cut` for `bdt_score_tth`,
+  `bdt_score_ttbar`, `bdt_score_tthbb`, and `bdt_score_tthcc`
+- the QCD scan keeps `bdt_score_qcd <= cut`
+- `qcd_score_threshold_scan` also reports an auxiliary `ttH` significance on the
+  same cut:
+  - `3-class`: `S = ttH(bb+cc)`, `B = ttbar + QCD`
+  - `4-class`: `S = ttHbb + ttHcc`, `B = ttbar + QCD`
 
-- `scored_root/<sample>/<input-file>.root`
-- `scored_root/prediction_summary.json`
+The `tth_score_study` output currently includes:
 
-The `predict` step is separate from `train` and `evaluate`:
+- pairwise `ttH`-score ROC curves such as `ttHbb vs QCD`, `ttHbb vs ttbar`,
+  `ttHcc vs QCD`, and `ttHcc vs ttbar`
+- QCD-cut scans in the `100 <= TargetFatJet_msoftdrop <= 150 GeV` window with
+  `ttHbb/sqrt(QCD)` and `ttHcc/sqrt(QCD)`
+- normalized mass-sculpting overlays for `TargetFatJet_msoftdrop`,
+  `TargetFatJet_regressed_mass_generic`, and
+  `TargetFatJet_regressed_mass_x2p`
+- dedicated QCD-only fine-binning comparisons, including a single-panel
+  overlay of the three mass definitions in the `100-150 GeV` window
+- signal-only peak and width summaries for `ttHbb` and `ttHcc`
 
-- `train` prepares inputs, trains models, and writes summaries
-- `evaluate` redraws plots from saved predictions
-- `predict` rewrites ROOT files with appended score branches
-
-The mass-correlation diagnostics in `evaluate` use both `prepared_inputs.npz` and `predictions.npz`:
-
-- if you only want raw feature-vs-mass correlations, rebuilding the prepared cache is enough
-- if you want the updated BDT score vs mass diagnostics after changing `study.features`, you must retrain so that `predictions.npz` matches the new model
-
-Each scored ROOT file keeps the full original `Events` tree and appends one or
-more BDT score branches:
+When `predict` is used, scored ROOT files keep the full original `Events` tree
+and append one or more BDT score branches:
 
 - multiclass branches follow `bdt_score_<class-name>`
-- `--prediction-mode both` in multiclass mode writes `bdt_score_mean_<class-name>` and `bdt_score_fold_routed_<class-name>`
-- the shipped 3-class configs therefore write `bdt_score_tth`, `bdt_score_ttbar`, and `bdt_score_qcd`
-- legacy binary configs still write `bdt_score`, or `bdt_score_mean` and `bdt_score_fold_routed`
-- `--score-branch <name>` changes the shared output branch prefix
+- the current `3-class` config writes `bdt_score_tth`, `bdt_score_ttbar`, and
+  `bdt_score_qcd`
+- the current `4-class` config writes `bdt_score_tthbb`, `bdt_score_tthcc`,
+  `bdt_score_ttbar`, and `bdt_score_qcd`
 
 By default, every event is preserved in the output tree, but only events that
 pass the configured `base_selection` receive a finite score. Other events keep
