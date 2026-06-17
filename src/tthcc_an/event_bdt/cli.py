@@ -49,6 +49,7 @@ TTH_SCORE_STUDY_MASS_VARIABLES = [
 ]
 TTH_SCORE_STUDY_PROCESSES = ["ttHbb", "ttHcc", "ttbar", "qcd"]
 TTH_SCORE_STUDY_QCD_DROP_TARGETS = [0.70, 0.90, 0.95, 0.98, 0.99, 0.995, 0.999]
+QCD_MASS_COMPARISON_FIXED_WINDOW = (50.0, 200.0)
 MASS_RANGE_QUANTILES = (0.005, 0.995)
 CLASS_SCORE_DROP_TARGETS = [0.70, *[value / 100.0 for value in range(90, 100)], 0.995, 0.999]
 QCD_SCORE_DROP_TARGETS = CLASS_SCORE_DROP_TARGETS
@@ -1172,7 +1173,19 @@ def _format_tth_score_study_text(payload: dict[str, object]) -> str:
 
     qcd_mass_shape_comparison_higgs_window = dict(payload.get("qcd_mass_shape_comparison_higgs_window", {}))
     if qcd_mass_shape_comparison_higgs_window:
-        lines.extend(["", f"QCD fine-binning shape comparison in 100-150 GeV window: {qcd_mass_shape_comparison_higgs_window.get('plot', '')}"])
+        x_window = dict(qcd_mass_shape_comparison_higgs_window.get("x_window", {}))
+        x_min = float(x_window.get("min", float("nan")))
+        x_max = float(x_window.get("max", float("nan")))
+        lines.extend(
+            [
+                "",
+                (
+                    "QCD fine-binning shape comparison in "
+                    f"{x_min:.0f}-{x_max:.0f} GeV window: "
+                    f"{qcd_mass_shape_comparison_higgs_window.get('plot', '')}"
+                ),
+            ]
+        )
 
     best_rows = dict(payload.get("qcd_cut_scan_best", {}))
     lines.extend(["", "Best QCD-score cuts:"])
@@ -1429,7 +1442,8 @@ def _write_tth_score_study_outputs(
 
         comparison_payloads_higgs_window: list[dict[str, object]] = []
         variable_summaries_higgs_window: dict[str, object] = {}
-        fixed_window_bins = np.linspace(100.0, 150.0, 101, dtype=np.float64)
+        window_min, window_max = QCD_MASS_COMPARISON_FIXED_WINDOW
+        fixed_window_bins = np.linspace(window_min, window_max, 101, dtype=np.float64)
         for mass_name in TTH_SCORE_STUDY_MASS_VARIABLES:
             qcd_values = mass_by_name[mass_name][qcd_mask]
             comparison_payloads_higgs_window.append(
@@ -1446,11 +1460,11 @@ def _write_tth_score_study_outputs(
                 "x_max": float(fixed_window_bins[-1]),
                 "weight_sum": float(np.sum(qcd_weights[np.isfinite(qcd_weights)])),
             }
-        qcd_comparison_window_path = plot_dir / "qcd_mass_shape_comparison__fine_binning__window_100_150.png"
+        qcd_comparison_window_path = plot_dir / "qcd_mass_shape_comparison__fine_binning__window_50_200.png"
         plot_qcd_mass_variable_comparison(
             qcd_comparison_window_path,
             comparison_payloads_higgs_window,
-            note_text="QCD only, fine binning, 100-150 GeV x-range, common y-scale",
+            note_text="QCD only, fine binning, 50-200 GeV x-range, common y-scale",
             overlay=True,
         )
         qcd_mass_shape_comparison_higgs_window = {
@@ -1458,10 +1472,10 @@ def _write_tth_score_study_outputs(
             "process": "qcd",
             "normalization": "unit-normalized weighted density",
             "common_y_scale": True,
-            "x_window": {"min": 100.0, "max": 150.0},
+            "x_window": {"min": window_min, "max": window_max},
             "variables": variable_summaries_higgs_window,
         }
-        output_plots["qcd_mass_shape_comparison_fine_binning_window_100_150"] = str(qcd_comparison_window_path)
+        output_plots["qcd_mass_shape_comparison_fine_binning_window_50_200"] = str(qcd_comparison_window_path)
 
     signal_mass_summary: dict[str, object] = {}
     for mass_name in TTH_SCORE_STUDY_MASS_VARIABLES:
