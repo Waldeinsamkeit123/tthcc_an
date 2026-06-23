@@ -726,18 +726,16 @@ def plot_tth_qcd_cut_significance_scan(
     _setup_style()
     metric_specs = {
         "s_over_sqrt_b": {
-            "left_key": "tthbb_s_over_sqrt_qcd",
-            "right_key": "tthcc_s_over_sqrt_qcd",
-            "left_label": r"ttH(H$\to$bb) / $\sqrt{QCD}$",
-            "right_label": r"ttH(H$\to$cc) / $\sqrt{QCD}$",
-            "title": r"$S / \sqrt{B}$ in mSD window",
+            "left_key": "tthbb_s_over_sqrt_qcd_ttbar",
+            "right_key": "tthcc_s_over_sqrt_qcd_ttbar",
+            "left_label": r"ttH(H$\to$bb) / $\sqrt{QCD+ttbar}$",
+            "right_label": r"ttH(H$\to$cc) / $\sqrt{QCD+ttbar}$",
         },
         "s_over_sqrt_s_plus_b": {
-            "left_key": "tthbb_s_over_sqrt_s_plus_qcd",
-            "right_key": "tthcc_s_over_sqrt_s_plus_qcd",
-            "left_label": r"ttH(H$\to$bb) / $\sqrt{S+QCD}$",
-            "right_label": r"ttH(H$\to$cc) / $\sqrt{S+QCD}$",
-            "title": r"$S / \sqrt{S+B}$ in mSD window",
+            "left_key": "tthbb_s_over_sqrt_s_plus_qcd_ttbar",
+            "right_key": "tthcc_s_over_sqrt_s_plus_qcd_ttbar",
+            "left_label": r"ttH(H$\to$bb) / $\sqrt{S+QCD+ttbar}$",
+            "right_label": r"ttH(H$\to$cc) / $\sqrt{S+QCD+ttbar}$",
         },
     }
     if metric not in metric_specs:
@@ -761,7 +759,6 @@ def plot_tth_qcd_cut_significance_scan(
     ax_left.set_xlabel(r"BDT QCD score cut: keep $score_{QCD} \leq cut$", fontsize=AXIS_LABEL_SIZE)
     ax_left.set_ylabel(str(spec["left_label"]), fontsize=AXIS_LABEL_SIZE, color=color_bb)
     ax_right.set_ylabel(str(spec["right_label"]), fontsize=AXIS_LABEL_SIZE, color=color_cc)
-    ax_left.set_title(str(spec["title"]), fontsize=TITLE_SIZE)
     ax_left.tick_params(labelsize=TICK_LABEL_SIZE, axis="y", colors=color_bb)
     ax_right.tick_params(labelsize=TICK_LABEL_SIZE, axis="y", colors=color_cc)
     ax_left.tick_params(labelsize=TICK_LABEL_SIZE, axis="x")

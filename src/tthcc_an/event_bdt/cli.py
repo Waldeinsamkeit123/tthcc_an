@@ -1190,7 +1190,14 @@ def _format_tth_score_study_text(payload: dict[str, object]) -> str:
     best_rows = dict(payload.get("qcd_cut_scan_best", {}))
     lines.extend(["", "Best QCD-score cuts:"])
     for key, row in best_rows.items():
-        metric_label = "S/sqrt(S+QCD)" if "s_plus_qcd" in key else "S/sqrt(QCD)"
+        if "s_plus_qcd_ttbar" in key:
+            metric_label = "S/sqrt(S+QCD+ttbar)"
+        elif "qcd_ttbar" in key:
+            metric_label = "S/sqrt(QCD+ttbar)"
+        elif "s_plus_qcd" in key:
+            metric_label = "S/sqrt(S+QCD)"
+        else:
+            metric_label = "S/sqrt(QCD)"
         lines.append(
             f"  {key}: cut = {float(row['qcd_score_cut']):.4f}, "
             f"{metric_label} = {float(row['value']):.6f}"
@@ -1323,19 +1330,27 @@ def _write_tth_score_study_outputs(
         keep_mask = mass_window_mask & (qcd_score <= cut) & np.isfinite(qcd_score) & np.isfinite(weights) & (weights > 0.0)
         yields = {
             process: float(np.sum(weights[keep_mask & (processes == process)]))
-            for process in ["ttHbb", "ttHcc", "qcd"]
+            for process in ["ttHbb", "ttHcc", "ttbar", "qcd"]
         }
         qcd_yield = yields["qcd"]
+        ttbar_yield = yields["ttbar"]
+        qcd_ttbar_yield = qcd_yield + ttbar_yield
         scan_rows.append(
             {
                 "qcd_score_cut": float(cut),
                 "yield_ttHbb": yields["ttHbb"],
                 "yield_ttHcc": yields["ttHcc"],
+                "yield_ttbar": ttbar_yield,
                 "yield_qcd": qcd_yield,
+                "yield_background_qcd_ttbar": qcd_ttbar_yield,
                 "tthbb_s_over_sqrt_qcd": yields["ttHbb"] / np.sqrt(qcd_yield) if qcd_yield > 0.0 else float("nan"),
                 "tthcc_s_over_sqrt_qcd": yields["ttHcc"] / np.sqrt(qcd_yield) if qcd_yield > 0.0 else float("nan"),
                 "tthbb_s_over_sqrt_s_plus_qcd": yields["ttHbb"] / np.sqrt(yields["ttHbb"] + qcd_yield) if yields["ttHbb"] + qcd_yield > 0.0 else float("nan"),
                 "tthcc_s_over_sqrt_s_plus_qcd": yields["ttHcc"] / np.sqrt(yields["ttHcc"] + qcd_yield) if yields["ttHcc"] + qcd_yield > 0.0 else float("nan"),
+                "tthbb_s_over_sqrt_qcd_ttbar": yields["ttHbb"] / np.sqrt(qcd_ttbar_yield) if qcd_ttbar_yield > 0.0 else float("nan"),
+                "tthcc_s_over_sqrt_qcd_ttbar": yields["ttHcc"] / np.sqrt(qcd_ttbar_yield) if qcd_ttbar_yield > 0.0 else float("nan"),
+                "tthbb_s_over_sqrt_s_plus_qcd_ttbar": yields["ttHbb"] / np.sqrt(yields["ttHbb"] + qcd_ttbar_yield) if yields["ttHbb"] + qcd_ttbar_yield > 0.0 else float("nan"),
+                "tthcc_s_over_sqrt_s_plus_qcd_ttbar": yields["ttHcc"] / np.sqrt(yields["ttHcc"] + qcd_ttbar_yield) if yields["ttHcc"] + qcd_ttbar_yield > 0.0 else float("nan"),
             }
         )
     marked_cuts = _qcd_scan_marked_cuts(qcd_scan_payload)
@@ -1364,10 +1379,10 @@ def _write_tth_score_study_outputs(
 
     qcd_cut_best = {}
     for key in [
-        "tthbb_s_over_sqrt_qcd",
-        "tthcc_s_over_sqrt_qcd",
-        "tthbb_s_over_sqrt_s_plus_qcd",
-        "tthcc_s_over_sqrt_s_plus_qcd",
+        "tthbb_s_over_sqrt_qcd_ttbar",
+        "tthcc_s_over_sqrt_qcd_ttbar",
+        "tthbb_s_over_sqrt_s_plus_qcd_ttbar",
+        "tthcc_s_over_sqrt_s_plus_qcd_ttbar",
     ]:
         finite_rows = [row for row in scan_rows if np.isfinite(float(row[key]))]
         if finite_rows:
@@ -1514,25 +1529,25 @@ def _write_tth_score_study_outputs(
             "qcd_cut_score": "bdt_score_qcd",
             "qcd_keep_region": "bdt_score_qcd <= cut",
             "qcd_cut_significance_definitions": {
-                "tthbb_s_over_sqrt_qcd": {
+                "tthbb_s_over_sqrt_qcd_ttbar": {
                     "formula": "S/sqrt(B)",
                     "signal_processes": ["ttHbb"],
-                    "background_processes": ["qcd"],
+                    "background_processes": ["qcd", "ttbar"],
                 },
-                "tthcc_s_over_sqrt_qcd": {
+                "tthcc_s_over_sqrt_qcd_ttbar": {
                     "formula": "S/sqrt(B)",
                     "signal_processes": ["ttHcc"],
-                    "background_processes": ["qcd"],
+                    "background_processes": ["qcd", "ttbar"],
                 },
-                "tthbb_s_over_sqrt_s_plus_qcd": {
+                "tthbb_s_over_sqrt_s_plus_qcd_ttbar": {
                     "formula": "S/sqrt(S+B)",
                     "signal_processes": ["ttHbb"],
-                    "background_processes": ["qcd"],
+                    "background_processes": ["qcd", "ttbar"],
                 },
-                "tthcc_s_over_sqrt_s_plus_qcd": {
+                "tthcc_s_over_sqrt_s_plus_qcd_ttbar": {
                     "formula": "S/sqrt(S+B)",
                     "signal_processes": ["ttHcc"],
-                    "background_processes": ["qcd"],
+                    "background_processes": ["qcd", "ttbar"],
                 },
             },
         },
