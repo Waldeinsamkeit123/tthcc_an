@@ -32,6 +32,7 @@
         "name": "TargetFatJet_pt",
         "label": "Target AK8 jet pT [GeV]",
         "bins": [
+          200,
           250,
           300,
           350,
@@ -176,7 +177,16 @@
         "HLT_PFHT250_QuadPFJet25_PNet2BTagMean0p55",
         "HLT_PFHT250_QuadPFJet30_PNet2BTagMean0p55",
         "HLT_PFHT330PT30_QuadPFJet_75_60_45_40_PNet3BTag_4p3",
-        "HLT_PFHT330PT30_QuadPFJet_75_60_45_40_PNet3BTag_2p0"
+        "HLT_PFHT330PT30_QuadPFJet_75_60_45_40_PNet3BTag_2p0",
+        "HLT_PFHT1050"
+      ],
+      "new_resolved_triggers": [
+        "HLT_PFHT250_QuadPFJet25_PNet2BTagMean0p55",
+        "HLT_PFHT330PT30_QuadPFJet_75_60_45_40_PNet3BTag_4p3",
+        "HLT_PFHT450_SixPFJet36_PNetBTag0p35",
+        "HLT_PFHT400_SixPFJet32_PNet2BTagMean0p50",
+        "HLT_PFHT400_FivePFJet_120_120_60_30_30_PNet2BTag_5p6",
+        "HLT_PFHT1050"
       ]
     },
     "or_groups": {
@@ -212,6 +222,14 @@
         "HLT_AK8PFJet450_SoftDropMass30",
         "HLT_AK8PFJet500",
         "HLT_AK8PFJet550"
+      ],
+      "OR_new_resolved_triggers": [
+        "HLT_PFHT250_QuadPFJet25_PNet2BTagMean0p55",
+        "HLT_PFHT330PT30_QuadPFJet_75_60_45_40_PNet3BTag_4p3",
+        "HLT_PFHT450_SixPFJet36_PNetBTag0p35",
+        "HLT_PFHT400_SixPFJet32_PNet2BTagMean0p50",
+        "HLT_PFHT400_FivePFJet_120_120_60_30_30_PNet2BTag_5p6",
+        "HLT_PFHT1050"
       ]
     }
   }
