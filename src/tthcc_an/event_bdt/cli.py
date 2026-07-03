@@ -16,6 +16,7 @@ from tthcc_an.event_bdt.plotting import (
     plot_process_score_shapes,
     plot_process_score_weighted_events,
     plot_qcd_cut_mass_shapes,
+    plot_qcd_cut_training_class_score_weighted_events,
     plot_qcd_mass_variable_comparison,
     plot_roc_curve,
     plot_score_vs_mass_grid,
@@ -49,6 +50,7 @@ TTH_SCORE_STUDY_MASS_VARIABLES = [
 ]
 TTH_SCORE_STUDY_PROCESSES = ["ttHbb", "ttHcc", "ttbar", "qcd"]
 TTH_SCORE_STUDY_QCD_DROP_TARGETS = [0.70, 0.90, 0.95, 0.98, 0.99, 0.995, 0.999]
+TTH_SCORE_PLOT_QCD_DROP_TARGETS = [0.97, 0.98, 0.99]
 QCD_MASS_COMPARISON_FIXED_WINDOW = (50.0, 200.0)
 MASS_RANGE_QUANTILES = (0.005, 0.995)
 CLASS_SCORE_DROP_TARGETS = [0.70, *[value / 100.0 for value in range(90, 100)], 0.995, 0.999]
@@ -1040,18 +1042,27 @@ def _qcd_scan_marked_cuts(qcd_scan_payload: dict[str, object] | None) -> list[di
 
 
 
-def _representative_qcd_cut_specs(qcd_scan_payload: dict[str, object] | None) -> list[dict[str, float]]:
+def _selected_qcd_scan_marked_cuts(
+    qcd_scan_payload: dict[str, object] | None,
+    targets: list[float],
+) -> list[dict[str, float]]:
     marked = _qcd_scan_marked_cuts(qcd_scan_payload)
-    if not marked:
+    selected: list[dict[str, float]] = []
+    for target in targets:
+        matches = [row for row in marked if abs(float(row["target_qcd_drop_fraction"]) - target) < 1e-9]
+        if matches:
+            selected.append(matches[0])
+    return selected
+
+
+
+def _representative_qcd_cut_specs(qcd_scan_payload: dict[str, object] | None) -> list[dict[str, float]]:
+    selected = _selected_qcd_scan_marked_cuts(qcd_scan_payload, TTH_SCORE_STUDY_QCD_DROP_TARGETS)
+    if not selected:
         return [
             {"target_qcd_drop_fraction": target, "score_cut": cut}
             for target, cut in zip(TTH_SCORE_STUDY_QCD_DROP_TARGETS, [0.45, 0.35, 0.30, 0.25, 0.20, 0.15, 0.10], strict=False)
         ]
-    selected: list[dict[str, float]] = []
-    for target in TTH_SCORE_STUDY_QCD_DROP_TARGETS:
-        matches = [row for row in marked if abs(float(row["target_qcd_drop_fraction"]) - target) < 1e-9]
-        if matches:
-            selected.append(matches[0])
     return selected
 
 
@@ -1748,6 +1759,37 @@ def _evaluate_outputs(config: EventBdtConfig) -> dict[str, object]:
                 _write_json(qcd_json_path, qcd_scan_payload)
                 summary["qcd_score_threshold_scan_txt"] = str(qcd_txt_path)
                 summary["qcd_score_threshold_scan_json"] = str(qcd_json_path)
+                qcd_cut_score_markers = _selected_qcd_scan_marked_cuts(
+                    qcd_scan_payload,
+                    TTH_SCORE_PLOT_QCD_DROP_TARGETS,
+                )
+                qcd_cut_score_names = [score_name for score_name in ["tthbb", "tthcc"] if score_name in score_by_class]
+                qcd_cut_score_plots: list[str] = []
+                if qcd_cut_score_markers and qcd_cut_score_names and "qcd" in score_by_class:
+                    for marker in qcd_cut_score_markers:
+                        target_percent = int(round(100.0 * float(marker["target_qcd_drop_fraction"])))
+                        score_plot_path = (
+                            config.plot_dir_path
+                            / f"score_by_training_class_weighted_events__tth_scores_qcd_drop_{target_percent}_logy.png"
+                        )
+                        plot_qcd_cut_training_class_score_weighted_events(
+                            score_plot_path,
+                            qcd_cut_marker=marker,
+                            qcd_scores=np.asarray(score_by_class["qcd"][trainable_mask], dtype=np.float64),
+                            score_by_class={
+                                score_name: np.asarray(score_by_class[score_name][trainable_mask], dtype=np.float64)
+                                for score_name in qcd_cut_score_names
+                            },
+                            weights=np.asarray(weights[trainable_mask], dtype=np.float64),
+                            labels=np.asarray(labels[trainable_mask], dtype=int),
+                            class_names=class_names,
+                            class_labels=class_labels,
+                            score_labels={score_name: class_labels.get(score_name, score_name) for score_name in qcd_cut_score_names},
+                            score_names=qcd_cut_score_names,
+                            log_y=True,
+                        )
+                        qcd_cut_score_plots.append(str(score_plot_path))
+                    summary["qcd_cut_score_plots"] = qcd_cut_score_plots
 
         if config.analysis_branches:
             if not config.prepared_inputs_path.exists():
@@ -1902,6 +1944,8 @@ def main() -> None:
             print(f"Class score scan: {summary['class_score_threshold_scan_txt']}")
         if "qcd_score_threshold_scan_txt" in summary:
             print(f"QCD score scan: {summary['qcd_score_threshold_scan_txt']}")
+        if "qcd_cut_score_plots" in summary:
+            print(f"Score plots at selected QCD cuts: {', '.join(summary['qcd_cut_score_plots'])}")
         if "training_curve_plots" in summary:
             print(f"Training curves: {', '.join(summary['training_curve_plots'])}")
         if "mass_correlation_summary_json" in summary:

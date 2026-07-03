@@ -412,6 +412,7 @@ event-BDT 原型目前有四个模式：
 - `plots/training_curve__merror.png`
 - `class_score_threshold_scan.txt/json`
 - `qcd_score_threshold_scan.txt/json`
+- `plots/score_by_training_class_weighted_events__tth_scores_qcd_drop_<97|98|99>_logy.png`
 - `plots/tth_score_study/*`
 - `tth_score_study_summary.txt/json`
 

@@ -426,6 +426,135 @@ def plot_training_class_score_weighted_events(
 
 
 
+def plot_qcd_cut_training_class_score_weighted_events(
+    outpath: Path,
+    *,
+    qcd_cut_marker: dict[str, float],
+    qcd_scores: np.ndarray,
+    score_by_class: dict[str, np.ndarray],
+    weights: np.ndarray,
+    labels: np.ndarray,
+    class_names: list[str],
+    class_labels: dict[str, str],
+    score_labels: dict[str, str],
+    score_names: list[str],
+    log_y: bool = False,
+) -> None:
+    _setup_style()
+    bins = np.linspace(0.0, 1.0, 31, dtype=np.float64)
+    fig, axes = plt.subplots(1, len(score_names), figsize=(5.6 * len(score_names), 4.9), squeeze=False)
+    fig.suptitle(
+        (
+            "Training-class score shapes after QCD-score cut\n"
+            f"QCD drop = {100.0 * float(qcd_cut_marker['target_qcd_drop_fraction']):.3f}%, "
+            f"score cut = {float(qcd_cut_marker['score_cut']):.6f}"
+        ),
+        fontsize=TITLE_SIZE + 1,
+        y=0.995,
+    )
+
+    histogram_payloads: list[list[tuple[np.ndarray, np.ndarray, np.ndarray, int, str] | None]] = [
+        [None for _ in class_names] for _ in score_names
+    ]
+    positive_min: float | None = None
+    max_count = 0.0
+    cut = float(qcd_cut_marker["score_cut"])
+    keep_mask = (
+        np.isfinite(qcd_scores)
+        & (qcd_scores <= cut)
+        & np.isfinite(weights)
+        & (weights > 0.0)
+        & (labels >= 0)
+    )
+
+    for score_index, score_name in enumerate(score_names):
+        score_values = np.asarray(score_by_class[score_name], dtype=np.float64)
+        finite_score_mask = keep_mask & np.isfinite(score_values)
+        for class_index, class_name in enumerate(class_names):
+            class_mask = finite_score_mask & (labels == class_index)
+            if not np.any(class_mask):
+                continue
+            counts, errors, edges = _weighted_counts_and_errors(
+                score_values[class_mask],
+                weights[class_mask],
+                bins,
+            )
+            histogram_payloads[score_index][class_index] = (
+                counts,
+                errors,
+                edges,
+                class_index,
+                class_labels.get(class_name, class_name),
+            )
+            positive_counts = counts[counts > 0.0]
+            if positive_counts.size:
+                current_min = float(np.min(positive_counts))
+                positive_min = current_min if positive_min is None else min(positive_min, current_min)
+                max_count = max(max_count, float(np.max(positive_counts)))
+
+    for score_index, score_name in enumerate(score_names):
+        score_label = score_labels.get(score_name, score_name)
+        ax = axes[0, score_index]
+        has_entries = False
+        for payload in histogram_payloads[score_index]:
+            if payload is None:
+                continue
+            counts, errors, edges, class_index, label = payload
+            centers = 0.5 * (edges[:-1] + edges[1:])
+            color = _class_color(class_index)
+            ax.step(
+                centers,
+                counts,
+                where="mid",
+                linewidth=1.5,
+                label=label,
+                color=color,
+            )
+            ax.errorbar(
+                centers,
+                counts,
+                yerr=errors,
+                fmt="none",
+                ecolor=color,
+                elinewidth=0.9,
+                capsize=0.0,
+                alpha=0.85,
+            )
+            has_entries = True
+
+        if score_index == 0:
+            ax.set_ylabel("Weighted events / bin", fontsize=AXIS_LABEL_SIZE)
+        ax.set_xlabel(f"{score_label} score", fontsize=AXIS_LABEL_SIZE)
+        ax.set_title(f"{score_label} score", fontsize=TITLE_SIZE - 1)
+        ax.set_xlim(0.0, 1.0)
+        if max_count > 0.0:
+            if log_y and positive_min is not None:
+                ax.set_yscale("log")
+                ax.set_ylim(bottom=max(positive_min * 0.5, 1e-12), top=max_count * 1.8)
+            else:
+                ax.set_ylim(0.0, max_count * 1.15)
+        ax.tick_params(labelsize=TICK_LABEL_SIZE)
+        ax.grid(alpha=0.25, which="both")
+        if not has_entries:
+            ax.text(0.5, 0.5, "No finite entries", ha="center", va="center", transform=ax.transAxes)
+        if score_index == 0:
+            ax.legend(frameon=False, loc="upper left", fontsize=LEGEND_FONT_SIZE)
+
+    axes[0, 0].text(
+        0.03,
+        0.73,
+        "Selection: bdt_score_qcd <= cut",
+        transform=axes[0, 0].transAxes,
+        ha="left",
+        va="top",
+        fontsize=8.2,
+        bbox={"facecolor": "white", "alpha": 0.72, "edgecolor": "none", "pad": 2.5},
+    )
+    _cms_label(axes[0, 0])
+    _save(fig, outpath)
+
+
+
 def plot_process_score_shapes(
     outpath: Path,
     scores: np.ndarray,

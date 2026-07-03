@@ -445,6 +445,7 @@ For a standard multiclass event-BDT training run, the output directory contains:
 - `plots/score_by_training_class__<class>.png` for each configured training class
 - `plots/score_by_training_class_weighted_events__<class>.png` for each configured training class
 - `plots/score_by_training_class_weighted_events__<class>_logy.png` for each configured training class
+- `plots/score_by_training_class_weighted_events__tth_scores_qcd_drop_<97|98|99>_logy.png` for multiclass configs that contain `tthbb`, `tthcc`, `ttbar`, and `qcd`
 - `plots/score_by_process__<class>.png` for each configured training class
 - `plots/score_by_process_weighted_events__<class>.png` for each configured training class
 - `plots/score_by_process_weighted_events__<class>_logy.png` for each configured training class
