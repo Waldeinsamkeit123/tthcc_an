@@ -27,6 +27,9 @@ class TriggerVariable:
     name: str
     label: str
     bins: list[float]
+    branch: str
+    index: int | None
+    plot_groups: list[str] | None
 
 
 @dataclass(frozen=True)
@@ -39,6 +42,7 @@ class TriggerEfficiencyConfig:
     triggers: list[str]
     trigger_groups: dict[str, list[str]]
     or_groups: dict[str, list[str]]
+    plot_groups: dict[str, list[str]]
     variables: list[TriggerVariable]
     weight_branch: str
     gen_sumw_file: str | None
@@ -114,14 +118,25 @@ def load_trigger_efficiency_config(
     if not triggers:
         raise ValueError("Config field 'study.triggers' must be a non-empty list.")
 
-    variables = [
-        TriggerVariable(
-            name=str(variable["name"]),
-            label=str(variable.get("label", variable["name"])),
-            bins=[float(edge) for edge in list(variable["bins"])],
+    variables: list[TriggerVariable] = []
+    for variable in list(study.get("variables", [])):
+        variable_name = str(variable["name"])
+        index_raw = variable.get("index")
+        index = int(index_raw) if index_raw is not None else None
+        if index is not None and index < 0:
+            raise ValueError(f"Variable {variable_name} index must be non-negative.")
+        variables.append(
+            TriggerVariable(
+                name=variable_name,
+                label=str(variable.get("label", variable_name)),
+                bins=[float(edge) for edge in list(variable["bins"])],
+                branch=str(variable.get("branch", variable_name)),
+                index=index,
+                plot_groups=[str(group) for group in list(variable["plot_groups"])]
+                if variable.get("plot_groups") is not None
+                else None,
+            )
         )
-        for variable in list(study.get("variables", []))
-    ]
     if not variables:
         raise ValueError("Config field 'study.variables' must be a non-empty list.")
     for variable in variables:
@@ -145,6 +160,10 @@ def load_trigger_efficiency_config(
         or_groups={
             str(key): [str(trigger) for trigger in list(value)]
             for key, value in dict(study.get("or_groups", {})).items()
+        },
+        plot_groups={
+            str(key): [str(trigger) for trigger in list(value)]
+            for key, value in dict(study.get("plot_groups", {})).items()
         },
         variables=variables,
         weight_branch=str(study.get("weight_branch", DEFAULT_WEIGHT_BRANCH)),

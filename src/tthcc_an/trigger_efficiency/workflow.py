@@ -60,6 +60,21 @@ def _extract_array(values: ak.Array) -> np.ndarray:
     return np.asarray(ak.to_numpy(values))
 
 
+def _extract_variable_array(values: ak.Array, variable: TriggerVariable) -> np.ndarray:
+    if isinstance(values, ak.Array) and values.ndim > 1:
+        if variable.index is None:
+            values = ak.fill_none(ak.firsts(values), np.nan)
+        else:
+            values = ak.pad_none(values, variable.index + 1, axis=1, clip=False)[:, variable.index]
+            values = ak.fill_none(values, np.nan)
+    elif variable.index is not None:
+        raise ValueError(
+            f"Variable {variable.name} requests index {variable.index} "
+            f"from scalar branch {variable.branch}."
+        )
+    return np.asarray(ak.to_numpy(values))
+
+
 def _histogram(values: np.ndarray, weights: np.ndarray, bins: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     finite = np.isfinite(values) & np.isfinite(weights) & (weights > 0)
     hist, _ = np.histogram(values[finite], bins=bins, weights=weights[finite])
@@ -100,7 +115,7 @@ def _empty_accumulators(config: TriggerEfficiencyConfig) -> dict[str, dict[str, 
 def _validate_group_triggers(config: TriggerEfficiencyConfig) -> None:
     empty_groups = [
         group_name
-        for group_name, triggers in {**config.trigger_groups, **config.or_groups}.items()
+        for group_name, triggers in {**config.trigger_groups, **config.or_groups, **config.plot_groups}.items()
         if not triggers
     ]
     if empty_groups:
@@ -115,9 +130,9 @@ def _read_and_accumulate(
     accumulators = _empty_accumulators(config)
     sample_summaries: list[dict[str, Any]] = []
 
-    variable_names = [variable.name for variable in config.variables]
+    variable_branches = [variable.branch for variable in config.variables]
     trigger_branches = _all_trigger_branches(config)
-    required_branches = sorted(set(variable_names + trigger_branches + [config.weight_branch]))
+    required_branches = sorted(set(variable_branches + trigger_branches + [config.weight_branch]))
 
     for sample in config.samples:
         sample_norm, gen_sumw, xsec_fb = _sample_normalization(
@@ -147,17 +162,17 @@ def _read_and_accumulate(
                         continue
                     chunk_size = len(arrays[branches_to_read[0]])
                     n_events += int(chunk_size)
-                    columns: dict[str, np.ndarray] = {}
+                    columns: dict[str, ak.Array] = {}
                     for branch in branches_to_read:
-                        columns[branch] = _extract_array(arrays[branch])
+                        columns[branch] = arrays[branch]
                     if config.weight_branch in columns:
-                        raw_weight = np.asarray(columns[config.weight_branch], dtype=np.float64)
+                        raw_weight = np.asarray(_extract_array(columns[config.weight_branch]), dtype=np.float64)
                     else:
                         raw_weight = np.ones(chunk_size, dtype=np.float64)
                     analysis_weight = sample_norm * np.abs(raw_weight)
 
                     trigger_values = {
-                        trigger: np.asarray(columns[trigger], dtype=bool)
+                        trigger: np.asarray(_extract_array(columns[trigger]), dtype=bool)
                         for trigger in trigger_branches
                     }
                     or_values = {
@@ -167,7 +182,7 @@ def _read_and_accumulate(
                     all_trigger_values = {**trigger_values, **or_values}
 
                     for variable in config.variables:
-                        values = np.asarray(columns[variable.name], dtype=np.float64)
+                        values = np.asarray(_extract_variable_array(columns[variable.branch], variable), dtype=np.float64)
                         bins = np.asarray(variable.bins, dtype=np.float64)
                         denominator, denominator_w2 = _histogram(values, analysis_weight, bins)
                         accumulators[variable.name]["denominator"][sample.process] += denominator
@@ -251,6 +266,25 @@ def _write_tables(
     return rows
 
 
+def _default_plot_groups(config: TriggerEfficiencyConfig) -> dict[str, list[str]]:
+    groups = dict(config.trigger_groups)
+    if config.or_groups:
+        groups["or_summary"] = list(config.or_groups.keys())
+    return groups
+
+
+def _plot_groups_for_variable(config: TriggerEfficiencyConfig, variable: TriggerVariable) -> dict[str, list[str]]:
+    if variable.plot_groups is None:
+        return dict(config.plot_groups) if config.plot_groups else _default_plot_groups(config)
+
+    available_groups = _default_plot_groups(config)
+    available_groups.update(config.plot_groups)
+    missing = [group for group in variable.plot_groups if group not in available_groups]
+    if missing:
+        raise KeyError(f"Variable {variable.name} references unknown plot groups: {missing}")
+    return {group: available_groups[group] for group in variable.plot_groups}
+
+
 def _make_plots(config: TriggerEfficiencyConfig, accumulators: dict[str, dict[str, Any]]) -> list[str]:
     config.plot_dir.mkdir(parents=True, exist_ok=True)
     plot_paths: list[str] = []
@@ -259,9 +293,7 @@ def _make_plots(config: TriggerEfficiencyConfig, accumulators: dict[str, dict[st
     for variable in config.variables:
         variable_acc = accumulators[variable.name]
         bins = np.asarray(variable.bins, dtype=np.float64)
-        groups = dict(config.trigger_groups)
-        if config.or_groups:
-            groups["or_summary"] = list(config.or_groups.keys())
+        groups = _plot_groups_for_variable(config, variable)
         for group_name, triggers in groups.items():
             outpath = config.plot_dir / f"eff_vs_{variable.name}__{group_name}.png"
             plot_trigger_group(
@@ -301,8 +333,20 @@ def run_trigger_efficiency(config: TriggerEfficiencyConfig) -> dict[str, Any]:
         "triggers": list(config.triggers),
         "trigger_groups": dict(config.trigger_groups),
         "or_groups": dict(config.or_groups),
+        "plot_groups": dict(config.plot_groups),
         "variables": [
-            {"name": variable.name, "label": variable.label, "bins": list(variable.bins)}
+            {
+                key: value
+                for key, value in {
+                    "name": variable.name,
+                    "label": variable.label,
+                    "bins": list(variable.bins),
+                    "branch": variable.branch if variable.branch != variable.name else None,
+                    "index": variable.index,
+                    "plot_groups": variable.plot_groups,
+                }.items()
+                if value is not None
+            }
             for variable in config.variables
         ],
         "n_table_rows": len(rows),

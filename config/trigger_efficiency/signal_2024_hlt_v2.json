@@ -1,0 +1,336 @@
+{
+  "normalization": {
+    "gen_sumw_file": "/eos/user/h/hanw/ttHcc/pepper_data/2024/HLT_v2/gen_sumws.json",
+    "xsec_file": "/eos/user/h/hanw/ttHcc/tthcc_an/crosssections_run3.json",
+    "lumi_fb": 109.08
+  },
+  "samples": [
+    {
+      "name": "TTH-Hto2B_Par-M-125_TuneCP5_13p6TeV_powheg-pythia8",
+      "process": "ttHbb",
+      "label": "ttH(H->bb)",
+      "files": [
+        "/eos/user/h/hanw/ttHcc/pepper_data/2024/HLT_v2_events/TTH-Hto2B_Par-M-125_TuneCP5_13p6TeV_powheg-pythia8/*.root"
+      ]
+    },
+    {
+      "name": "TTH-Hto2C_Par-M-125_TuneCP5_13p6TeV_powheg-pythia8",
+      "process": "ttHcc",
+      "label": "ttH(H->cc)",
+      "files": [
+        "/eos/user/h/hanw/ttHcc/pepper_data/2024/HLT_v2_events/TTH-Hto2C_Par-M-125_TuneCP5_13p6TeV_powheg-pythia8/*.root"
+      ]
+    }
+  ],
+  "study": {
+    "outdir": "outputs/trigger_efficiency_signal_2024_hlt_v2",
+    "tree_name": "Events",
+    "weight_branch": "weight",
+    "uproot_step_size": "200 MB",
+    "variables": [
+      {
+        "name": "TargetFatJet_pt",
+        "label": "Target AK8 jet pT [GeV]",
+        "bins": [200, 250, 300, 350, 400, 450, 500, 600, 700, 800, 1000, 1200],
+        "plot_groups": [
+          "ak8_inclusive",
+          "ak8_softdrop",
+          "ak8_pnetbb",
+          "unprescaled_ak8_lowpt",
+          "unprescaled_ak8_highpt",
+          "pfht_multijet_pnet",
+          "new_resolved_triggers",
+          "or_summary"
+        ]
+      },
+      {
+        "name": "genhiggs_pt",
+        "label": "gen Higgs pT [GeV]",
+        "bins": [0, 100, 150, 200, 250, 300, 350, 400, 450, 500, 600, 700, 800, 1000, 1200],
+        "plot_groups": [
+          "ak8_inclusive",
+          "ak8_softdrop",
+          "ak8_pnetbb",
+          "unprescaled_ak8_lowpt",
+          "unprescaled_ak8_highpt",
+          "pfht_multijet_pnet",
+          "new_resolved_triggers",
+          "or_summary"
+        ]
+      },
+      {
+        "name": "nCleanedJet",
+        "label": "Number of cleaned jets",
+        "bins": [1, 2, 3, 4, 5, 6, 7, 8, 9]
+      },
+      {
+        "name": "CleanedJet_pt__1",
+        "label": "Cleaned jet 1 pT [GeV]",
+        "branch": "CleanedJet_pt",
+        "index": 0,
+        "bins": [20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80]
+      },
+      {
+        "name": "CleanedJet_pt__2",
+        "label": "Cleaned jet 2 pT [GeV]",
+        "branch": "CleanedJet_pt",
+        "index": 1,
+        "bins": [20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80]
+      },
+      {
+        "name": "CleanedJet_pt__3",
+        "label": "Cleaned jet 3 pT [GeV]",
+        "branch": "CleanedJet_pt",
+        "index": 2,
+        "bins": [20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80]
+      },
+      {
+        "name": "CleanedJet_pt__4",
+        "label": "Cleaned jet 4 pT [GeV]",
+        "branch": "CleanedJet_pt",
+        "index": 3,
+        "bins": [20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80]
+      },
+      {
+        "name": "CleanedJet_pt__5",
+        "label": "Cleaned jet 5 pT [GeV]",
+        "branch": "CleanedJet_pt",
+        "index": 4,
+        "bins": [20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80]
+      },
+      {
+        "name": "CleanedJet_pt__6",
+        "label": "Cleaned jet 6 pT [GeV]",
+        "branch": "CleanedJet_pt",
+        "index": 5,
+        "bins": [20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80]
+      },
+      {
+        "name": "nJet",
+        "label": "Number of jets",
+        "bins": [1, 2, 3, 4, 5, 6, 7, 8, 9]
+      },
+      {
+        "name": "Jet_pt__1",
+        "label": "Jet 1 pT [GeV]",
+        "branch": "Jet_pt",
+        "index": 0,
+        "bins": [20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80]
+      },
+      {
+        "name": "Jet_pt__2",
+        "label": "Jet 2 pT [GeV]",
+        "branch": "Jet_pt",
+        "index": 1,
+        "bins": [20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80]
+      },
+      {
+        "name": "Jet_pt__3",
+        "label": "Jet 3 pT [GeV]",
+        "branch": "Jet_pt",
+        "index": 2,
+        "bins": [20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80]
+      },
+      {
+        "name": "Jet_pt__4",
+        "label": "Jet 4 pT [GeV]",
+        "branch": "Jet_pt",
+        "index": 3,
+        "bins": [20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80]
+      },
+      {
+        "name": "Jet_pt__5",
+        "label": "Jet 5 pT [GeV]",
+        "branch": "Jet_pt",
+        "index": 4,
+        "bins": [20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80]
+      },
+      {
+        "name": "Jet_pt__6",
+        "label": "Jet 6 pT [GeV]",
+        "branch": "Jet_pt",
+        "index": 5,
+        "bins": [20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80]
+      },
+      {
+        "name": "HT",
+        "label": "HT [GeV]",
+        "bins": [250, 300, 350, 400, 450, 500, 550, 600, 650, 700, 750, 800, 850, 900, 950, 1000]
+      },
+      {
+        "name": "CleanedHT",
+        "label": "Cleaned HT [GeV]",
+        "bins": [250, 300, 350, 400, 450, 500, 550, 600, 650, 700, 750, 800, 850, 900, 950, 1000]
+      }
+    ],
+    "triggers": [
+      "HLT_AK8PFJet140",
+      "HLT_AK8PFJet200",
+      "HLT_AK8PFJet220_SoftDropMass40",
+      "HLT_AK8PFJet220_SoftDropMass40_PNetBB0p06_DoubleAK4PFJet60_30_PNet2BTagMean0p50",
+      "HLT_AK8PFJet220_SoftDropMass40_PNetBB0p06_DoubleAK4PFJet60_30_PNet2BTagMean0p53",
+      "HLT_AK8PFJet220_SoftDropMass40_PNetBB0p06_DoubleAK4PFJet60_30_PNet2BTagMean0p55",
+      "HLT_AK8PFJet220_SoftDropMass40_PNetBB0p06_DoubleAK4PFJet60_30_PNet2BTagMean0p60",
+      "HLT_AK8PFJet230_SoftDropMass40",
+      "HLT_AK8PFJet230_SoftDropMass40_PNetBB0p06",
+      "HLT_AK8PFJet230_SoftDropMass40_PNetBB0p10",
+      "HLT_AK8PFJet250_SoftDropMass40_PNetBB0p06",
+      "HLT_AK8PFJet250_SoftDropMass40_PNetBB0p10",
+      "HLT_AK8PFJet260",
+      "HLT_AK8PFJet275_Nch40",
+      "HLT_AK8PFJet275_Nch45",
+      "HLT_AK8PFJet275_SoftDropMass40_PNetBB0p06",
+      "HLT_AK8PFJet275_SoftDropMass40_PNetBB0p10",
+      "HLT_AK8PFJet320",
+      "HLT_AK8PFJet380_SoftDropMass30",
+      "HLT_AK8PFJet400",
+      "HLT_AK8PFJet400_SoftDropMass30",
+      "HLT_AK8PFJet425_SoftDropMass30",
+      "HLT_AK8PFJet450",
+      "HLT_AK8PFJet450_SoftDropMass30",
+      "HLT_AK8PFJet500",
+      "HLT_AK8PFJet550",
+      "HLT_PFHT1050",
+      "HLT_PFHT340_QuadPFJet70_50_40_40_PNet2BTagMean0p70",
+      "HLT_PFHT280_QuadPFJet30_PNet2BTagMean0p55",
+      "HLT_PFHT280_QuadPFJet30_PNet2BTagMean0p60",
+      "HLT_PFHT280_QuadPFJet35_PNet2BTagMean0p60",
+      "HLT_PFHT400_SixPFJet32_PNet2BTagMean0p50",
+      "HLT_PFHT450_SixPFJet36_PNetBTag0p35",
+      "HLT_PFHT400_FivePFJet_120_120_60_30_30_PNet2BTag_5p6",
+      "HLT_PFHT400_FivePFJet_120_120_60_30_30_PNet2BTag_4p3",
+      "HLT_PFHT250_QuadPFJet25_PNet2BTagMean0p55",
+      "HLT_PFHT250_QuadPFJet30_PNet2BTagMean0p55",
+      "HLT_PFHT330PT30_QuadPFJet_75_60_45_40_PNet3BTag_4p3",
+      "HLT_PFHT330PT30_QuadPFJet_75_60_45_40_PNet3BTag_2p0"
+    ],
+    "trigger_groups": {
+      "ak8_inclusive": [
+        "HLT_AK8PFJet140",
+        "HLT_AK8PFJet200",
+        "HLT_AK8PFJet260",
+        "HLT_AK8PFJet320",
+        "HLT_AK8PFJet400",
+        "HLT_AK8PFJet450",
+        "HLT_AK8PFJet500",
+        "HLT_AK8PFJet550",
+        "HLT_PFHT1050"
+      ],
+      "ak8_softdrop": [
+        "HLT_AK8PFJet220_SoftDropMass40",
+        "HLT_AK8PFJet230_SoftDropMass40",
+        "HLT_AK8PFJet380_SoftDropMass30",
+        "HLT_AK8PFJet400_SoftDropMass30",
+        "HLT_AK8PFJet425_SoftDropMass30",
+        "HLT_AK8PFJet450_SoftDropMass30",
+        "HLT_AK8PFJet275_Nch40",
+        "HLT_AK8PFJet275_Nch45"
+      ],
+      "ak8_pnetbb": [
+        "HLT_AK8PFJet220_SoftDropMass40_PNetBB0p06_DoubleAK4PFJet60_30_PNet2BTagMean0p50",
+        "HLT_AK8PFJet220_SoftDropMass40_PNetBB0p06_DoubleAK4PFJet60_30_PNet2BTagMean0p53",
+        "HLT_AK8PFJet220_SoftDropMass40_PNetBB0p06_DoubleAK4PFJet60_30_PNet2BTagMean0p55",
+        "HLT_AK8PFJet220_SoftDropMass40_PNetBB0p06_DoubleAK4PFJet60_30_PNet2BTagMean0p60",
+        "HLT_AK8PFJet230_SoftDropMass40_PNetBB0p06",
+        "HLT_AK8PFJet230_SoftDropMass40_PNetBB0p10",
+        "HLT_AK8PFJet250_SoftDropMass40_PNetBB0p06",
+        "HLT_AK8PFJet250_SoftDropMass40_PNetBB0p10",
+        "HLT_AK8PFJet275_SoftDropMass40_PNetBB0p06",
+        "HLT_AK8PFJet275_SoftDropMass40_PNetBB0p10"
+      ],
+      "unprescaled_ak8_lowpt": [
+        "HLT_AK8PFJet220_SoftDropMass40_PNetBB0p06_DoubleAK4PFJet60_30_PNet2BTagMean0p50",
+        "HLT_AK8PFJet220_SoftDropMass40_PNetBB0p06_DoubleAK4PFJet60_30_PNet2BTagMean0p53",
+        "HLT_AK8PFJet220_SoftDropMass40_PNetBB0p06_DoubleAK4PFJet60_30_PNet2BTagMean0p55",
+        "HLT_AK8PFJet220_SoftDropMass40_PNetBB0p06_DoubleAK4PFJet60_30_PNet2BTagMean0p60",
+        "HLT_AK8PFJet230_SoftDropMass40_PNetBB0p06",
+        "HLT_AK8PFJet230_SoftDropMass40_PNetBB0p10",
+        "HLT_AK8PFJet250_SoftDropMass40_PNetBB0p06",
+        "HLT_AK8PFJet250_SoftDropMass40_PNetBB0p10",
+        "HLT_AK8PFJet275_Nch40",
+        "HLT_AK8PFJet275_Nch45",
+        "HLT_AK8PFJet275_SoftDropMass40_PNetBB0p06",
+        "HLT_AK8PFJet275_SoftDropMass40_PNetBB0p10"
+      ],
+      "unprescaled_ak8_highpt": [
+        "HLT_AK8PFJet380_SoftDropMass30",
+        "HLT_AK8PFJet400_SoftDropMass30",
+        "HLT_AK8PFJet425_SoftDropMass30",
+        "HLT_AK8PFJet450_SoftDropMass30",
+        "HLT_AK8PFJet500",
+        "HLT_AK8PFJet550"
+      ],
+      "pfht_multijet_pnet": [
+        "HLT_PFHT340_QuadPFJet70_50_40_40_PNet2BTagMean0p70",
+        "HLT_PFHT280_QuadPFJet30_PNet2BTagMean0p55",
+        "HLT_PFHT280_QuadPFJet30_PNet2BTagMean0p60",
+        "HLT_PFHT280_QuadPFJet35_PNet2BTagMean0p60",
+        "HLT_PFHT400_SixPFJet32_PNet2BTagMean0p50",
+        "HLT_PFHT450_SixPFJet36_PNetBTag0p35",
+        "HLT_PFHT400_FivePFJet_120_120_60_30_30_PNet2BTag_5p6",
+        "HLT_PFHT400_FivePFJet_120_120_60_30_30_PNet2BTag_4p3",
+        "HLT_PFHT250_QuadPFJet25_PNet2BTagMean0p55",
+        "HLT_PFHT250_QuadPFJet30_PNet2BTagMean0p55",
+        "HLT_PFHT330PT30_QuadPFJet_75_60_45_40_PNet3BTag_4p3",
+        "HLT_PFHT330PT30_QuadPFJet_75_60_45_40_PNet3BTag_2p0",
+        "HLT_PFHT1050"
+      ],
+      "new_resolved_triggers": [
+        "HLT_PFHT250_QuadPFJet25_PNet2BTagMean0p55",
+        "HLT_PFHT330PT30_QuadPFJet_75_60_45_40_PNet3BTag_4p3",
+        "HLT_PFHT450_SixPFJet36_PNetBTag0p35",
+        "HLT_PFHT400_SixPFJet32_PNet2BTagMean0p50",
+        "HLT_PFHT400_FivePFJet_120_120_60_30_30_PNet2BTag_5p6",
+        "HLT_PFHT1050"
+      ]
+    },
+    "or_groups": {
+      "OR_resolved": [
+        "HLT_PFHT1050",
+        "HLT_PFHT340_QuadPFJet70_50_40_40_PNet2BTagMean0p70",
+        "HLT_PFHT280_QuadPFJet30_PNet2BTagMean0p55",
+        "HLT_PFHT280_QuadPFJet30_PNet2BTagMean0p60",
+        "HLT_PFHT280_QuadPFJet35_PNet2BTagMean0p60",
+        "HLT_PFHT400_SixPFJet32_PNet2BTagMean0p50",
+        "HLT_PFHT450_SixPFJet36_PNetBTag0p35",
+        "HLT_PFHT400_FivePFJet_120_120_60_30_30_PNet2BTag_5p6",
+        "HLT_PFHT400_FivePFJet_120_120_60_30_30_PNet2BTag_4p3",
+        "HLT_PFHT250_QuadPFJet25_PNet2BTagMean0p55",
+        "HLT_PFHT250_QuadPFJet30_PNet2BTagMean0p55",
+        "HLT_PFHT330PT30_QuadPFJet_75_60_45_40_PNet3BTag_4p3",
+        "HLT_PFHT330PT30_QuadPFJet_75_60_45_40_PNet3BTag_2p0"
+      ],
+      "OR_ak8": [
+        "HLT_AK8PFJet220_SoftDropMass40_PNetBB0p06_DoubleAK4PFJet60_30_PNet2BTagMean0p50",
+        "HLT_AK8PFJet220_SoftDropMass40_PNetBB0p06_DoubleAK4PFJet60_30_PNet2BTagMean0p53",
+        "HLT_AK8PFJet220_SoftDropMass40_PNetBB0p06_DoubleAK4PFJet60_30_PNet2BTagMean0p55",
+        "HLT_AK8PFJet220_SoftDropMass40_PNetBB0p06_DoubleAK4PFJet60_30_PNet2BTagMean0p60",
+        "HLT_AK8PFJet230_SoftDropMass40_PNetBB0p06",
+        "HLT_AK8PFJet230_SoftDropMass40_PNetBB0p10",
+        "HLT_AK8PFJet250_SoftDropMass40_PNetBB0p06",
+        "HLT_AK8PFJet250_SoftDropMass40_PNetBB0p10",
+        "HLT_AK8PFJet275_SoftDropMass40_PNetBB0p06",
+        "HLT_AK8PFJet275_SoftDropMass40_PNetBB0p10",
+        "HLT_AK8PFJet380_SoftDropMass30",
+        "HLT_AK8PFJet400_SoftDropMass30",
+        "HLT_AK8PFJet425_SoftDropMass30",
+        "HLT_AK8PFJet450_SoftDropMass30",
+        "HLT_AK8PFJet500",
+        "HLT_AK8PFJet550"
+      ],
+      "OR_new_resolved_triggers": [
+        "HLT_PFHT250_QuadPFJet25_PNet2BTagMean0p55",
+        "HLT_PFHT330PT30_QuadPFJet_75_60_45_40_PNet3BTag_4p3",
+        "HLT_PFHT450_SixPFJet36_PNetBTag0p35",
+        "HLT_PFHT400_SixPFJet32_PNet2BTagMean0p50",
+        "HLT_PFHT400_FivePFJet_120_120_60_30_30_PNet2BTag_5p6",
+        "HLT_PFHT1050"
+      ]
+    },
+    "plot_groups": {
+      "OR_new_resolved_triggers": [
+        "OR_new_resolved_triggers"
+      ]
+    }
+  }
+}
