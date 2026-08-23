@@ -2,12 +2,13 @@
 
 ## 目标
 
-这个仓库用于 Run 3 boosted `ttHcc` / `ttHbb` study，目前并行维护两条主分析线：
+这个仓库用于 Run 3 boosted `ttHcc` / `ttHbb` study，目前并行维护三条主分析线：
 
 - boosted Higgs tagger study
 - prototype event-level BDT study
+- event-level multiclass NN output study
 
-其中第一条线的核心工作是从 Pepper 产出的 ROOT ntuple 中读取 `Events` tree，构建 AK8 fatjet 级别样本，计算 working points / ROC / 区域效率，并输出表格、JSON 摘要和 CMS 风格图。第二条线目前聚焦于 `0L` 的事件级 BDT 原型。
+其中第一条线的核心工作是从 Pepper 产出的 ROOT ntuple 中读取 `Events` tree，构建 AK8 fatjet 级别样本，计算 working points / ROC / 区域效率，并输出表格、JSON 摘要和 CMS 风格图。第二条线目前聚焦于 `0L` 的事件级 BDT 原型。第三条线目前研究 2024 boosted `1L` 的事件级 multiclass NN 输出，后续用于扩展 `0L`、模型比较和 mass-sculpting study。
 
 后续代理在这个仓库里工作时，默认目标应当是：
 
@@ -109,11 +110,28 @@ python scripts/run_event_bdt.py \
   --config config/event_bdt/train_ttHcc_0l_3class_baseline_jecs.json
 ```
 
+event-level NN study 入口：
+
+```bash
+python scripts/run_nn_study.py \
+  --config config/nn_study/nn_study_2024_1l_v1.json
+```
+
+推荐 smoke test：
+
+```bash
+python scripts/run_nn_study.py \
+  --config config/nn_study/nn_study_2024_1l_v1.json \
+  --max-files-per-sample 1 \
+  --outdir /tmp/nn_study_2024_1l_v1_smoke
+```
+
 常用辅助入口：
 
 - `scripts/submit_boosted_higgs_tagger_condor.py`: 生成并可提交 HTCondor workflow
 - `scripts/run_boosted_higgs_tagger_study.py`: repo 根目录下的薄包装脚本，真正逻辑在 `src/tthcc_an/boosted_higgs_tagger_study.py`
 - `scripts/run_event_bdt.py`: event-BDT prototype CLI
+- `scripts/run_nn_study.py`: event-level multiclass NN score-study CLI
 
 ## 仓库结构
 
@@ -122,9 +140,11 @@ python scripts/run_event_bdt.py \
   - 正常分析调参应优先改这里
   - 支持 `#` 和 `//` 行注释，解析逻辑在 `config_loader.py`
   - `config/event_bdt/` 里是 event-BDT 样本配置和训练配置
+  - `config/nn_study/` 里是 event-level NN study 配置
 - `src/tthcc_an/`
   - 核心分析代码
   - `src/tthcc_an/event_bdt/` 里是 event-BDT 原型模块
+  - `src/tthcc_an/nn_study/` 里是独立的 NN score-study 子系统
 - `scripts/`
   - 本地运行和 Condor 提交脚本
 - `outputs/`
@@ -262,6 +282,27 @@ python scripts/run_event_bdt.py \
   - `prepare/train/evaluate/predict` 子命令，以及 scan / study 输出编排
 
 如果一个改动涉及 event-BDT workflow，优先在这个子目录内完成，不要把逻辑揉进 boosted fatjet study 主流程。
+
+### `src/tthcc_an/nn_study/`
+
+这是 event-level multiclass NN 输出研究的独立子系统：
+
+- `config.py`
+  - 读取 channel、样本、score/truth 定义、selection、归一化和绘图设置
+- `dataset.py`
+  - 读取 ROOT、跳过 metadata-only 文件、应用 sample stitching / event selection、构建显式权重
+- `definitions.py`
+  - 计算配置表达式并检查 truth category 是否重叠
+- `metrics.py`
+  - weighted confusion、pairwise discriminator、精确 weighted ROC 和标准 AUC
+- `plotting.py`
+  - score shape/yield、confusion、pairwise ROC 和 AUC matrix
+- `reporting.py`
+  - JSON/text summary
+- `cli.py`
+  - 运行编排和 `--max-files-per-sample` / `--only` 支持
+
+当前 shipping config 是 `config/nn_study/nn_study_2024_1l_v1.json`。涉及 NN study 的改动应留在这个子系统，不要混入 boosted tagger 或 event-BDT。
 
 ## 推荐改动路径
 
@@ -418,6 +459,30 @@ event-BDT 原型目前有四个模式：
 
 如果只改了 mass 分析分支或绘图逻辑，优先考虑 `prepare --force` 加 `evaluate`，不要默认重训。
 
+### Event-level NN study
+
+当前 NN study 直接读取 Pepper 最终 `Events` ntuple，不训练模型。默认产物包括：
+
+- 每个 NN 输出的 `score_<class>.png` 和 `score_<class>__yield.png`
+- `confusion_matrix_truth.png` 和 `confusion_matrix_pred.png`
+- 每个可用 signal truth class 的 `roc_<class>.png`
+- `pairwise_auc_matrix.png`
+- `nn_study_summary.json` 和 `nn_study_summary.txt`
+
+分类输出放在 config 的 `scores`，其名称和顺序必须与 `truth_categories`
+一致，并参与 confusion、pairwise ROC 和 AUC。只需要画 shape/yield、但不对应
+独立 truth 类的组合输出放在 `auxiliary_scores`；当前 0L/1L 均配置了
+`score_ttH`、`score_ttZ`、`score_ttX`、`score_Xbb`、`score_Xcc` 和
+`score_ttjets`。0L 额外把 `score_qcd` 作为正式分类输出，truth 为
+`n_gentop == 0`。
+
+`--only scores confusion roc auc mass-sculpting qcd-score-scan` 可限制绘图组，但 summary 总会写出。
+`--only mass-sculpting` 会按需只读配置中的 scan score、mass、truth/stitching
+和 weight branches，并跳过 score/confusion/ROC/AUC 计算。当前没有
+cache/plot-only 或 Condor 支持，因此 mass-only 仍需扫描 ROOT events。
+`--only qcd-score-scan` 只读 `score_qcd`、truth/stitching 和 weight 所需分支，
+跳过普通 score、confusion、ROC/AUC 和 mass-sculpting。
+
 ## 重要分析约定
 
 - 默认候选策略是 `mass_window_all_jets`
@@ -456,6 +521,52 @@ event-BDT 原型额外约定：
   - 都在 `100 <= TargetFatJet_msoftdrop <= 150 GeV` 窗口内评估
 - 当前 `4-class` `tth_score_study` 还会产出 QCD-only fine-binning 质量比较图，包括单 panel 的 `100-150 GeV` overlay
 
+NN study 额外约定：
+
+- 当前 input 是 `/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_1L_v1_events`
+- normalization metadata 是 `/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_1L_v1/gen_sumws.json`
+- 实际 NN 分支使用 `score_<class>`，包含 `score_ttZqq`；12 个 score class 与 truth class 必须同名同序
+- truth 分支是 `higgs_decay`, `z_decay`, `n_gentop`, `tt_hf_flavor`, `tt_hf_count`
+- truth 定义保持 resolved/Pepper 现行约定；`tt_hf_count` 的 1/2/>2 分别对应 single-extra、double-extra、pair-extra 类，不要静默重定义
+- ntuple 已在 Pepper `HasTargetFatJet` 末级写出，且此前已过 `ReqMassWindow`；shipping config 不额外加 `nJet > 4` 或其他 physics cut
+- inclusive `TTto*` 只保留 LF/c 类；`TTBBto*` 与 `TTto*-BBDPS` 只保留 b 类，避免 inclusive bottom 重复
+- shape plot 按 truth class 分别归一到 1；yield/confusion/ROC/AUC 使用 `sample_norm * abs(weight)`
+- pairwise discriminator 是 `score_i / (score_i + score_j)`，零分母取 0.5
+- AUC 使用标准 `integral(TPR dFPR)`；图上仍按需求画 `x=signal efficiency`, `y=background efficiency`
+- 1L config 当前启用 `TargetFatJet_regressed_mass_generic` mass-sculpting：
+  - `score_ttX > 0.4, 0.5, 0.6, 0.7, 0.8, 0.85, 0.9`
+  - `score_ttLF < 0.01, 0.02, 0.05, 0.1`
+- mass config 使用 `populations` 列表；每项可分别通过 `samples` 精确选择
+  config sample name，并通过 `truth_categories` 进一步选择 truth 类
+- 当前 0L/1L populations 包括全部 selected MC、三个彼此独立的
+  `ttHcc_sample` (`TTH-Hto2C`)、`ttHbb_sample` (`TTH-Hto2B`) 和
+  `ttZ_sample` (`TTZ-ZtoQQ`)，以及通过 `exclude_samples` 排除这三个样本后的
+  `all_background_samples`；不要再次把三个 ttH/ttZ 样本合并成一个 population
+- 0L 除 `score_ttX` 和 `score_ttLF` 外，还扫描
+  `score_qcd < 0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, 0.1`
+- 0L 另有配置驱动的 `qcd_score_scan`：实际使用 `score_qcd < cut`，候选点与
+  mass-sculpting 相同，并在 `1e-6` 到 `1` 做 fine log scan；不要加入旧脚本的
+  `nJet > 5`
+- QCD-score scan 的 `tt+X` 固定为
+  `ttLF, ttcj, ttcc, tt2c, ttbj, ttbb, tt2b`，QCD 使用现有
+  `qcd: n_gentop == 0` truth，因此包含配置样本中满足该
+  truth 的 QCD/Wto2Q/Zto2Q 事件
+- QCD-score expected yield 和 weighted efficiency 使用
+  `sample_norm * abs(weight)`；输出位于 `plots/qcd_score_scan/` 和
+  `summaries/qcd_score_scan.{json,txt}`，不自动选择最终 working point
+- `qcd_score_distribution.png` 使用 linear `score_qcd` 的 logarithmic bins，
+  各组独立归一化；展示组为 `ttHcc`、`ttLF`、合并 charm
+  (`ttcj, ttcc, tt2c`)、合并 bottom (`ttbj, ttbb, tt2b`) 和 `qcd`
+- 图中的竖线和右侧 rejected 阴影只由
+  `qcd_score_scan.reference_threshold` 控制，它只是可视化参考值，不是最终 cut
+- mass 范围复用 event-BDT 约定：加权 `0.5%–99.5%` 分位加 4% padding，45 bins
+- mass shape 使用 `sample_norm * abs(weight)` 后在绘图区间独立归一到积分 1；
+  下方面板显示每个 mass bin 的 `kept / uncut`
+- 输出为 `plots/mass_sculpting__<mass>__<score_branch>.png` 和
+  `plots/mass_sculpting__<mass>__<score_branch>__<population>.png`（默认
+  `all_selected_mc` 省略 population suffix），以及
+  `summaries/mass_sculpting_summary.{json,txt}`；未来 0L 只应扩 config，不复制脚本
+
 如果要改权重定义、默认 cut 或 target/background 归类，请先确认这会不会破坏旧结果的可比较性。
 
 ## 对后续代理最有用的工作习惯
@@ -463,6 +574,7 @@ event-BDT 原型额外约定：
 - 先读 `README.md` 和目标 config，再决定是否需要改 Python。
 - 用户若只是想“换样本、换默认 target、换输出目录、换 plot preset”，大概率只需要改 JSON。
 - 用户若只是想调 event-BDT 的样本、feature、preselection、reweighting 变量，也优先改 `config/event_bdt/*.json`。
+- 用户若只是想换 NN input、模型 score 分支、truth/sample composition 或 selection，优先改 `config/nn_study/*.json`。
 - 只改绘图时，优先走 `--plot-only`，不要每次都重读 ROOT。
 - 只改 merge/Condor 逻辑时，不要碰 physics 分类代码。
 - 只改 physics 定义时，要留意 histogram payload 和 text/report 输出是否同步。
@@ -532,6 +644,23 @@ python scripts/run_event_bdt.py \
   --config config/event_bdt/train_ttHcc_0l_3class_baseline_jecs.json \
   --outdir outputs/event_bdt_ttHcc_0l_3class_baseline_jecs_v3/scored_root
 ```
+
+- event-level NN study 验证：
+
+```bash
+python scripts/run_nn_study.py \
+  --config config/nn_study/nn_study_2024_1l_v1.json \
+  --max-files-per-sample 1 \
+  --outdir /tmp/nn_study_2024_1l_v1_smoke
+```
+
+至少检查 summary 中：
+
+- `number_of_events_unclassified == 0`
+- confusion normalization 没有 NaN
+- pairwise AUC 全在 `[0, 1]`
+- `auc_validation.max_abs_difference` 与 sklearn 一致到浮点精度
+- sample selection 没有把 inclusive `TTto*` bottom 与专用 bottom samples 重复计数
 
 如果改动涉及 payload schema，至少验证：
 

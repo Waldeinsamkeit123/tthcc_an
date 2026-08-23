@@ -2,9 +2,16 @@
     "TTtoLNu2Q_TuneCP5_13p6TeV_powheg-pythia8": 405619.9685,
     "TTto2L2Nu_TuneCP5_13p6TeV_powheg-pythia8": 97918.79376,
     "TTto4Q_TuneCP5_13p6TeV_powheg-pythia8": 420061.23776069,
+
     "TTBBtoLNu2Q_TuneCP5_13p6TeV_powheg-pythia8": 15840,
     "TTBBto2L2Nu_TuneCP5_13p6TeV_powheg-pythia8": 3852.0000,
     "TTBBto4Q_TuneCP5_13p6TeV_powheg-pythia8": 16260,
+
+    # taken from nanoTTH Run 3
+    "TTto4Q-BBDPS_TuneCP5_13p6TeV_powheg-pythia8": 2972.5778,
+    "TTtoLNu2Q-BBDPS_TuneCP5_13p6TeV_powheg-pythia8": 2895.7953,
+    "TTto2L2Nu-BBDPS_TuneCP5_13p6TeV_powheg-pythia8": 704.20477,
+
     "TWminustoLNu2Q_TuneCP5_13p6TeV_powheg-pythia8": 19301.64315,
     "TWminusto2L2Nu_TuneCP5_13p6TeV_powheg-pythia8": 4659.518174,
     "TWminusto4Q_TuneCP5_13p6TeV_powheg-pythia8": 19988.8387,
@@ -15,12 +22,27 @@
     "TbarBQtoLNu-t-channel-4FS_TuneCP5_13p6TeV_powheg-madspin-pythia8" : 28392.756,
     "TBbarQto2Q-t-channel-4FS_TuneCP5_13p6TeV_powheg-madspin-pythia8": 97787.275,
     "TbarBQto2Q-t-channel-4FS_TuneCP5_13p6TeV_powheg-madspin-pythia8": 58807.244,
+    
     "TTH-Hto2C_Par-M-125_TuneCP5_13p6TeV_powheg-pythia8" : 16.299458,
     "TTH-Hto2B_Par-M-125_TuneCP5_13p6TeV_powheg-pythia8" : 328.35712,
+    "TTH-HtoNon2B_Par-M-125_TuneCP5_13p6TeV_powheg-pythia8": 235.44288,
+
+    "TTH-Hto2B-TTto2L2Nu_Par-M-125_TuneCP5_13p6TeV_powheg-pythia8" : 34.81197,
+    "TTH-Hto2B-TTto4Q_Par-M-125_TuneCP5_13p6TeV_powheg-pythia8" : 149.33965,
+    "TTH-Hto2B-TTtoLNu2Q_Par-M-125_TuneCP5_13p6TeV_powheg-pythia8" : 144.2055,
+
+    "ttH-Hto2C_M-125_TTTo2L2Nu_TuneCP5_13p6TeV-powheg-pythia8": 1.72804,
+    "ttH-Hto2C_M-125_TTToSemiLep_TuneCP5_13p6TeV-powheg-pythia8": 7.15827,
+    "ttH-Hto2C_M-125_TTToHadronic_TuneCP5_13p6TeV-powheg-pythia": 7.41313,
+
     "TTZ-ZtoQQ-1Jets_TuneCP5_13p6TeV_amcatnloFXFXold-pythia8" : 633.7,
+
+    "ttZ-Zto2Q_M-125_TTTo2L2Nu_TuneCP5_13p6TeV-powheg-pythia8": 67.184,
+    "ttZ-Zto2Q_M-125_TTToSemiLep_TuneCP5_13p6TeV-powheg-pythia8": 278.3028,
+    "ttZ-Zto2Q_M-125_TTToHadronic_TuneCP5_13p6TeV-powheg-pythia8": 288.2122,
+
     "TTLL_Bin-MLL-4to50_TuneCP5_13p6TeV_amcatnlo-pythia8" : 39.49,
     "TTLL_Bin-MLL-50_TuneCP5_13p6TeV_amcatnlo-pythia8" : 86.46,
-    "TTH-HtoNon2B_Par-M-125_TuneCP5_13p6TeV_powheg-pythia8": 235.44288,
     "TTLNu-1Jets_TuneCP5_13p6TeV_amcatnloFXFX-pythia8": 238.8,
 
     # W -> lnu copied from nanoTTH 
@@ -96,10 +118,47 @@
     "ZZto2L2Nu_TuneCP5_13p6TeV_powheg-pythia8": 1153.689,
     "ZZto4L_TuneCP5_13p6TeV_powheg-pythia8": 1555.41,
 
-    # Add by Han, need to update. Find from XSDB.
-    "Zto2Q-4Jets_Bin-HT-100to400_TuneCP5_13p6TeV_madgraphMLM-pythia8": 6328.0,
-    "Zto2Q-4Jets_Bin-HT-400to800_TuneCP5_13p6TeV_madgraphMLM-pythia8": 141.1,
-    "Zto2Q-4Jets_Bin-HT-800to1500_TuneCP5_13p6TeV_madgraphMLM-pythia8": 12.9,
-    "Zto2Q-4Jets_Bin-HT-1500to2500_TuneCP5_13p6TeV_madgraphMLM-pythia8": 0.8541,
-    "Zto2Q-4Jets_Bin-HT-2500_TuneCP5_13p6TeV_madgraphMLM-pythia8": 0.05684
+    # Z+jets from genXSecAnalyzer
+    "Zto2Q-4Jets_Bin-HT-100to400_TuneCP5_13p6TeV_madgraphMLM-pythia8": 6.349e+06,
+    "Zto2Q-4Jets_Bin-HT-400to800_TuneCP5_13p6TeV_madgraphMLM-pythia8": 1.445e+05,
+    "Zto2Q-4Jets_Bin-HT-800to1500_TuneCP5_13p6TeV_madgraphMLM-pythia8": 1.290e+04,
+    "Zto2Q-4Jets_Bin-HT-1500to2500_TuneCP5_13p6TeV_madgraphMLM-pythia8": 854.1,
+    "Zto2Q-4Jets_Bin-HT-2500_TuneCP5_13p6TeV_madgraphMLM-pythia8": 56.84,
+
+    # W -> qq PTQQ
+    "Wto2Q-2Jets_Bin-PTQQ-100_TuneCP5_13p6TeV_amcatnloFXFX-pythia8": 2.051e+07,
+    "Wto2Q-2Jets_Bin-PTQQ-200_TuneCP5_13p6TeV_amcatnloFXFX-pythia8": 7.376e+05,
+    "Wto2Q-2Jets_Bin-PTQQ-400_TuneCP5_13p6TeV_amcatnloFXFX-pythia8": 2.081e+04,
+    "Wto2Q-2Jets_Bin-PTQQ-600_TuneCP5_13p6TeV_amcatnloFXFX-pythia8": 2.252e+03,
+
+    # W ->lnu PTLNu
+    # amcatNLO k-factor XSDB->NNLO 0.952
+    "WtoLNu-2Jets_Bin-1J-PTLNu-40to100_TuneCP5_13p6TeV_amcatnloFXFX-pythia8": 4008872,   
+    "WtoLNu-2Jets_Bin-1J-PTLNu-100to200_TuneCP5_13p6TeV_amcatnloFXFX-pythia8": 325869.6,
+    "WtoLNu-2Jets_Bin-1J-PTLNu-200to400_TuneCP5_13p6TeV_amcatnloFXFX-pythia8": 20791.68,
+    "WtoLNu-2Jets_Bin-1J-PTLNu-400to600_TuneCP5_13p6TeV_amcatnloFXFX-pythia8": 651.644,
+    "WtoLNu-2Jets_Bin-1J-PTLNu-600_TuneCP5_13p6TeV_amcatnloFXFX-pythia8": 73.80856,
+    "WtoLNu-2Jets_Bin-2J-PTLNu-40to100_TuneCP5_13p6TeV_amcatnloFXFX-pythia8": 1505112,
+    "WtoLNu-2Jets_Bin-2J-PTLNu-100to200_TuneCP5_13p6TeV_amcatnloFXFX-pythia8": 391367.2,
+    "WtoLNu-2Jets_Bin-2J-PTLNu-200to400_TuneCP5_13p6TeV_amcatnloFXFX-pythia8": 51017.68,
+    "WtoLNu-2Jets_Bin-2J-PTLNu-400to600_TuneCP5_13p6TeV_amcatnloFXFX-pythia8": 2950.248,
+    "WtoLNu-2Jets_Bin-2J-PTLNu-600_TuneCP5_13p6TeV_amcatnloFXFX-pythia8": 500.6568,
+
+    # QCD pT binned copied from nanoTTH
+    "QCD_Bin-PT-15to20_TuneCP5_13p6TeV_pythia8":885700000000,
+    "QCD_Bin-PT-20to30_TuneCP5_13p6TeV_pythia8":415700000000,
+    "QCD_Bin-PT-30to50_TuneCP5_13p6TeV_pythia8":112300000000,
+    "QCD_Bin-PT-50to80_TuneCP5_13p6TeV_pythia8":16730000000,
+    "QCD_Bin-PT-80to120_TuneCP5_13p6TeV_pythia8":2506000000,
+    "QCD_Bin-PT-120to170_TuneCP5_13p6TeV_pythia8":439800000,
+    "QCD_Bin-PT-170to300_TuneCP5_13p6TeV_pythia8":113300000,
+    "QCD_Bin-PT-300to470_TuneCP5_13p6TeV_pythia8":7581000,
+    "QCD_Bin-PT-470to600_TuneCP5_13p6TeV_pythia8":623300,
+    "QCD_Bin-PT-600to800_TuneCP5_13p6TeV_pythia8":178700,
+    "QCD_Bin-PT-800to1000_TuneCP5_13p6TeV_pythia8":30620,
+    "QCD_Bin-PT-1000to1500_TuneCP5_13p6TeV_pythia8":9306,
+    "QCD_Bin-PT-1500to2000_TuneCP5_13p6TeV_pythia8":501.5,
+    "QCD_Bin-PT-2000to2500_TuneCP5_13p6TeV_pythia8":42.64,
+    "QCD_Bin-PT-2500to3000_TuneCP5_13p6TeV_pythia8":4.454,
+    "QCD_Bin-PT-3000_TuneCP5_13p6TeV_pythia8":0.5539
 }

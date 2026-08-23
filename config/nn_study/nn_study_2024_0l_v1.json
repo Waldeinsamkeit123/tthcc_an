@@ -1,0 +1,312 @@
+{
+  "normalization": {
+    "gen_sumw_file": "/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_0L_v1/gen_sumws.json",
+    "xsec_file": "/eos/user/h/hanw/ttHcc/tthcc_an/crosssections_run3.json",
+    "lumi_fb": 109.08
+  },
+  "study": {
+    "channel": "2024 boosted 0L",
+    "year": "2024",
+    "energy_tev": 13.6,
+    "input_location": "/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_0L_v1_events",
+    "outdir": "outputs/nn_study_2024_0l_v1",
+    "tree_name": "Events",
+    "weight_branch": "weight",
+    "selection": "",
+    "selection_branches": [],
+    "truth_branches": ["higgs_decay", "z_decay", "n_gentop", "tt_hf_flavor", "tt_hf_count"],
+    "analysis_branches": [
+      "nJet",
+      "nCleanedJet",
+      "nFatJet",
+      "nTargetFatJet",
+      "TargetFatJet_mass",
+      "TargetFatJet_msoftdrop",
+      "TargetFatJet_regressed_mass_generic",
+      "TargetFatJet_regressed_mass_x2p",
+      "TargetFatJet_random_mass"
+    ],
+    "flatten_first_branches": [
+      "TargetFatJet_mass",
+      "TargetFatJet_msoftdrop",
+      "TargetFatJet_regressed_mass_generic",
+      "TargetFatJet_regressed_mass_x2p",
+      "TargetFatJet_random_mass"
+    ],
+    "uproot_step_size": "200 MB",
+    "validate_auc_with_sklearn": true
+  },
+  "plot": {
+    "format": "png",
+    "score_bins": 20,
+    "score_range": [0.0, 1.0],
+    "shape_log_y": true,
+    "shape_y_min": 0.0001,
+    "yield_log_y": true,
+    "roc_y_min": 0.00001,
+    "roc_y_max": 2.0,
+    "score_dpi": 150,
+    "confusion_dpi": 150,
+    "roc_dpi": 100,
+    "auc_dpi": 150
+  },
+  "weighting_diagnostics": {
+    "enabled": true,
+    "reweight_variables": {
+      "MET_pt": [-1.0e+99, 1.0e+99],
+      "MET_phi": [-1.0e+99, 1.0e+99]
+    },
+    "class_weights": {
+      "ttHcc": 1.0,
+      "ttHbb": 1.0,
+      "ttZcc": 1.0,
+      "ttZbb": 1.0,
+      "ttZqq": 1.0,
+      "ttLF": 1.0,
+      "ttcj": 1.0,
+      "ttcc": 1.0,
+      "tt2c": 1.0,
+      "ttbj": 1.0,
+      "ttbb": 1.0,
+      "tt2b": 1.0,
+      "qcd": 0.5
+    },
+    "key_auc_pairs": [
+      ["ttHcc", "ttHbb"],
+      ["ttHcc", "ttZcc"],
+      ["ttHcc", "ttLF"],
+      ["ttHbb", "ttZbb"]
+    ],
+    "model_output_classes": [
+      "ttHcc", "ttHbb", "ttZqq", "ttZcc", "ttZbb", "ttLF",
+      "ttcj", "ttcc", "tt2c", "ttbj", "ttbb", "tt2b",
+      "zbb", "zcc", "zqq", "wcq", "wqq", "qcd"
+    ],
+    "persisted_score_classes": [
+      "ttHcc", "ttHbb", "ttZcc", "ttZbb", "ttZqq", "ttLF",
+      "ttcj", "ttcc", "tt2c", "ttbj", "ttbb", "tt2b", "qcd"
+    ]
+  },
+  "qcd_score_scan": {
+    "enabled": true,
+    "score": "score_qcd",
+    "direction": "<",
+    "candidate_thresholds": [0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, 0.1],
+    "scan_min": 0.000001,
+    "scan_max": 1.0,
+    "scan_points": 121,
+    "distribution_bins": 60,
+    "distribution_log10_range": [-6.0, 0.0],
+    "working_point_bins": 25,
+    "working_point_score_range": [0.00001, 1.0],
+    "reference_threshold": 0.001,
+    "distribution_groups": [
+      {
+        "name": "ttHcc",
+        "label": "ttHcc",
+        "truth_categories": ["ttHcc"],
+        "color": "orangered"
+      },
+      {
+        "name": "tt_light",
+        "label": "tt+light",
+        "truth_categories": ["ttLF"],
+        "color": "royalblue"
+      },
+      {
+        "name": "tt_ge1c",
+        "label": "tt+>=1c",
+        "truth_categories": ["ttcj", "ttcc", "tt2c"],
+        "color": "deepskyblue"
+      },
+      {
+        "name": "tt_ge1b",
+        "label": "tt+>=1b",
+        "truth_categories": ["ttbj", "ttbb", "tt2b"],
+        "color": "forestgreen"
+      },
+      {
+        "name": "qcd",
+        "label": "QCD",
+        "truth_categories": ["qcd"],
+        "color": "black"
+      }
+    ],
+    "groups": [
+      {
+        "name": "ttHcc",
+        "label": "ttHcc",
+        "truth_categories": ["ttHcc"],
+        "color": "orangered"
+      },
+      {
+        "name": "qcd",
+        "label": "QCD",
+        "truth_categories": ["qcd"],
+        "color": "black"
+      },
+      {
+        "name": "ttX",
+        "label": "tt+X",
+        "truth_categories": ["ttLF", "ttcj", "ttcc", "tt2c", "ttbj", "ttbb", "tt2b"],
+        "color": "tab:blue"
+      },
+      {
+        "name": "all_non_qcd_background",
+        "label": "All non-QCD background",
+        "truth_categories": ["ttHbb", "ttZcc", "ttZbb", "ttZqq", "ttLF", "ttcj", "ttcc", "tt2c", "ttbj", "ttbb", "tt2b"],
+        "color": "gray"
+      }
+    ]
+  },
+  "mass_sculpting": {
+    "enabled": true,
+    "populations": [
+      {
+        "name": "all_selected_mc",
+        "label": "All selected MC",
+        "samples": "all",
+        "truth_categories": "all"
+      },
+      {
+        "name": "ttHcc_sample",
+        "label": "ttHcc sample",
+        "samples": [
+          "TTH-Hto2C_Par-M-125_TuneCP5_13p6TeV_powheg-pythia8"
+        ],
+        "truth_categories": "all"
+      },
+      {
+        "name": "ttHbb_sample",
+        "label": "ttHbb sample",
+        "samples": [
+          "TTH-Hto2B_Par-M-125_TuneCP5_13p6TeV_powheg-pythia8"
+        ],
+        "truth_categories": "all"
+      },
+      {
+        "name": "ttZ_sample",
+        "label": "ttZ sample",
+        "samples": [
+          "TTZ-ZtoQQ-1Jets_TuneCP5_13p6TeV_amcatnloFXFXold-pythia8"
+        ],
+        "truth_categories": "all"
+      },
+      {
+        "name": "all_background_samples",
+        "label": "All background samples (excluding ttH/ttZ)",
+        "samples": "all",
+        "exclude_samples": [
+          "TTH-Hto2C_Par-M-125_TuneCP5_13p6TeV_powheg-pythia8",
+          "TTH-Hto2B_Par-M-125_TuneCP5_13p6TeV_powheg-pythia8",
+          "TTZ-ZtoQQ-1Jets_TuneCP5_13p6TeV_amcatnloFXFXold-pythia8"
+        ],
+        "truth_categories": "all"
+      }
+    ],
+    "variables": [
+      {
+        "branch": "TargetFatJet_regressed_mass_generic",
+        "label": "TargetFatJet regressed mass generic [GeV]",
+        "bins": 45,
+        "range_quantiles": [0.005, 0.995],
+        "padding_fraction": 0.04
+      }
+    ],
+    "scans": [
+      {
+        "score": "score_ttX",
+        "direction": ">",
+        "thresholds": [0.4, 0.5, 0.6, 0.7, 0.8, 0.85, 0.9]
+      },
+      {
+        "score": "score_ttLF",
+        "direction": "<",
+        "thresholds": [0.01, 0.02, 0.05, 0.1]
+      },
+      {
+        "score": "score_qcd",
+        "direction": "<",
+        "thresholds": [0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, 0.1]
+      }
+    ]
+  },
+  "scores": [
+    {"name": "ttHcc", "label": "ttHcc", "branch": "score_ttHcc", "color": "orangered"},
+    {"name": "ttHbb", "label": "ttHbb", "branch": "score_ttHbb", "color": "#FDAE61"},
+    {"name": "ttZcc", "label": "ttZcc", "branch": "score_ttZcc", "color": "pink"},
+    {"name": "ttZbb", "label": "ttZbb", "branch": "score_ttZbb", "color": "tab:pink"},
+    {"name": "ttZqq", "label": "ttZqq", "branch": "score_ttZqq", "color": "crimson"},
+    {"name": "ttLF", "label": "ttLF", "branch": "score_ttLF", "color": "blue"},
+    {"name": "ttcj", "label": "ttcj", "branch": "score_ttcj", "color": "#ABD9E9"},
+    {"name": "ttcc", "label": "ttcc", "branch": "score_ttcc", "color": "#74ADD1"},
+    {"name": "tt2c", "label": "tt2c", "branch": "score_tt2c", "color": "#4575B4"},
+    {"name": "ttbj", "label": "ttbj", "branch": "score_ttbj", "color": "#313695"},
+    {"name": "ttbb", "label": "ttbb", "branch": "score_ttbb", "color": "darkgreen"},
+    {"name": "tt2b", "label": "tt2b", "branch": "score_tt2b", "color": "forestgreen"},
+    {"name": "qcd", "label": "qcd", "branch": "score_qcd", "color": "lime"}
+  ],
+  "auxiliary_scores": [
+    {"name": "ttH", "label": "ttH", "branch": "score_ttH"},
+    {"name": "ttZ", "label": "ttZ", "branch": "score_ttZ"},
+    {"name": "ttX", "label": "ttX", "branch": "score_ttX"},
+    {"name": "Xbb", "label": "Xbb", "branch": "score_Xbb"},
+    {"name": "Xcc", "label": "Xcc", "branch": "score_Xcc"},
+    {"name": "ttjets", "label": "ttjets", "branch": "score_ttjets"}
+  ],
+  "truth_categories": [
+    {"name": "ttHcc", "label": "ttHcc", "expression": "higgs_decay == 4", "color": "orangered"},
+    {"name": "ttHbb", "label": "ttHbb", "expression": "higgs_decay == 5", "color": "#FDAE61"},
+    {"name": "ttZcc", "label": "ttZcc", "expression": "(n_gentop == 2) & (z_decay == 4)", "color": "pink"},
+    {"name": "ttZbb", "label": "ttZbb", "expression": "(n_gentop == 2) & (z_decay == 5)", "color": "tab:pink"},
+    {"name": "ttZqq", "label": "ttZqq", "expression": "(n_gentop == 2) & (z_decay >= 1) & (z_decay <= 3)", "color": "crimson"},
+    {"name": "ttLF", "label": "ttLF", "expression": "(n_gentop == 2) & (tt_hf_flavor == 0) & (higgs_decay == 0) & (z_decay == 0)", "color": "blue"},
+    {"name": "ttcj", "label": "ttcj", "expression": "(n_gentop == 2) & (tt_hf_flavor == 4) & (tt_hf_count <= 1) & (higgs_decay == 0) & (z_decay == 0)", "color": "#ABD9E9"},
+    {"name": "ttcc", "label": "ttcc", "expression": "(n_gentop == 2) & (tt_hf_flavor == 4) & (tt_hf_count > 2) & (higgs_decay == 0) & (z_decay == 0)", "color": "#74ADD1"},
+    {"name": "tt2c", "label": "tt2c", "expression": "(n_gentop == 2) & (tt_hf_flavor == 4) & (tt_hf_count == 2) & (higgs_decay == 0) & (z_decay == 0)", "color": "#4575B4"},
+    {"name": "ttbj", "label": "ttbj", "expression": "(n_gentop == 2) & (tt_hf_flavor == 5) & (tt_hf_count <= 1) & (higgs_decay == 0) & (z_decay == 0)", "color": "#313695"},
+    {"name": "ttbb", "label": "ttbb", "expression": "(n_gentop == 2) & (tt_hf_flavor == 5) & (tt_hf_count > 2) & (higgs_decay == 0) & (z_decay == 0)", "color": "darkgreen"},
+    {"name": "tt2b", "label": "tt2b", "expression": "(n_gentop == 2) & (tt_hf_flavor == 5) & (tt_hf_count == 2) & (higgs_decay == 0) & (z_decay == 0)", "color": "forestgreen"},
+    {"name": "qcd", "label": "qcd", "expression": "n_gentop == 0", "color": "lime"}
+  ],
+  "samples": [
+    {"name": "TTH-Hto2C_Par-M-125_TuneCP5_13p6TeV_powheg-pythia8", "label": "ttHcc", "files": ["/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_0L_v1_events/TTH-Hto2C_Par-M-125_TuneCP5_13p6TeV_powheg-pythia8/*.root"]},
+    {"name": "TTH-Hto2B_Par-M-125_TuneCP5_13p6TeV_powheg-pythia8", "label": "ttHbb", "files": ["/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_0L_v1_events/TTH-Hto2B_Par-M-125_TuneCP5_13p6TeV_powheg-pythia8/*.root"]},
+    {"name": "TTZ-ZtoQQ-1Jets_TuneCP5_13p6TeV_amcatnloFXFXold-pythia8", "label": "ttZ", "files": ["/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_0L_v1_events/TTZ-ZtoQQ-1Jets_TuneCP5_13p6TeV_amcatnloFXFXold-pythia8/*.root"]},
+
+    {"name": "TTtoLNu2Q_TuneCP5_13p6TeV_powheg-pythia8", "label": "tt+LF/c", "selection": "tt_hf_flavor != 5", "files": ["/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_0L_v1_events/TTtoLNu2Q_TuneCP5_13p6TeV_powheg-pythia8/*.root"]},
+    {"name": "TTto2L2Nu_TuneCP5_13p6TeV_powheg-pythia8", "label": "tt+LF/c", "selection": "tt_hf_flavor != 5", "files": ["/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_0L_v1_events/TTto2L2Nu_TuneCP5_13p6TeV_powheg-pythia8/*.root"]},
+    {"name": "TTto4Q_TuneCP5_13p6TeV_powheg-pythia8", "label": "tt+LF/c", "selection": "tt_hf_flavor != 5", "files": ["/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_0L_v1_events/TTto4Q_TuneCP5_13p6TeV_powheg-pythia8/*.root"]},
+
+    {"name": "TTBBtoLNu2Q_TuneCP5_13p6TeV_powheg-pythia8", "label": "tt+b", "selection": "tt_hf_flavor == 5", "files": ["/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_0L_v1_events/TTBBtoLNu2Q_TuneCP5_13p6TeV_powheg-pythia8/*.root"]},
+    {"name": "TTBBto2L2Nu_TuneCP5_13p6TeV_powheg-pythia8", "label": "tt+b", "selection": "tt_hf_flavor == 5", "files": ["/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_0L_v1_events/TTBBto2L2Nu_TuneCP5_13p6TeV_powheg-pythia8/*.root"]},
+    {"name": "TTBBto4Q_TuneCP5_13p6TeV_powheg-pythia8", "label": "tt+b", "selection": "tt_hf_flavor == 5", "files": ["/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_0L_v1_events/TTBBto4Q_TuneCP5_13p6TeV_powheg-pythia8/*.root"]},
+    {"name": "TTtoLNu2Q-BBDPS_TuneCP5_13p6TeV_powheg-pythia8", "label": "tt+b DPS", "selection": "tt_hf_flavor == 5", "files": ["/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_0L_v1_events/TTtoLNu2Q-BBDPS_TuneCP5_13p6TeV_powheg-pythia8/*.root"]},
+    {"name": "TTto2L2Nu-BBDPS_TuneCP5_13p6TeV_powheg-pythia8", "label": "tt+b DPS", "selection": "tt_hf_flavor == 5", "files": ["/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_0L_v1_events/TTto2L2Nu-BBDPS_TuneCP5_13p6TeV_powheg-pythia8/*.root"]},
+    {"name": "TTto4Q-BBDPS_TuneCP5_13p6TeV_powheg-pythia8", "label": "tt+b DPS", "selection": "tt_hf_flavor == 5", "files": ["/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_0L_v1_events/TTto4Q-BBDPS_TuneCP5_13p6TeV_powheg-pythia8/*.root"]},
+
+    {"name": "QCD-4Jets_Bin-HT-40to70_TuneCP5_13p6TeV_madgraphMLM-pythia8", "label": "QCD", "files": ["/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_0L_v1_events/QCD-4Jets_Bin-HT-40to70_TuneCP5_13p6TeV_madgraphMLM-pythia8/*.root"]},
+    {"name": "QCD-4Jets_Bin-HT-70to100_TuneCP5_13p6TeV_madgraphMLM-pythia8", "label": "QCD", "files": ["/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_0L_v1_events/QCD-4Jets_Bin-HT-70to100_TuneCP5_13p6TeV_madgraphMLM-pythia8/*.root"]},
+    {"name": "QCD-4Jets_Bin-HT-100to200_TuneCP5_13p6TeV_madgraphMLM-pythia8", "label": "QCD", "files": ["/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_0L_v1_events/QCD-4Jets_Bin-HT-100to200_TuneCP5_13p6TeV_madgraphMLM-pythia8/*.root"]},
+    {"name": "QCD-4Jets_Bin-HT-200to400_TuneCP5_13p6TeV_madgraphMLM-pythia8", "label": "QCD", "files": ["/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_0L_v1_events/QCD-4Jets_Bin-HT-200to400_TuneCP5_13p6TeV_madgraphMLM-pythia8/*.root"]},
+    {"name": "QCD-4Jets_Bin-HT-400to600_TuneCP5_13p6TeV_madgraphMLM-pythia8", "label": "QCD", "files": ["/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_0L_v1_events/QCD-4Jets_Bin-HT-400to600_TuneCP5_13p6TeV_madgraphMLM-pythia8/*.root"]},
+    {"name": "QCD-4Jets_Bin-HT-600to800_TuneCP5_13p6TeV_madgraphMLM-pythia8", "label": "QCD", "files": ["/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_0L_v1_events/QCD-4Jets_Bin-HT-600to800_TuneCP5_13p6TeV_madgraphMLM-pythia8/*.root"]},
+    {"name": "QCD-4Jets_Bin-HT-800to1000_TuneCP5_13p6TeV_madgraphMLM-pythia8", "label": "QCD", "files": ["/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_0L_v1_events/QCD-4Jets_Bin-HT-800to1000_TuneCP5_13p6TeV_madgraphMLM-pythia8/*.root"]},
+    {"name": "QCD-4Jets_Bin-HT-1000to1200_TuneCP5_13p6TeV_madgraphMLM-pythia8", "label": "QCD", "files": ["/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_0L_v1_events/QCD-4Jets_Bin-HT-1000to1200_TuneCP5_13p6TeV_madgraphMLM-pythia8/*.root"]},
+    {"name": "QCD-4Jets_Bin-HT-1200to1500_TuneCP5_13p6TeV_madgraphMLM-pythia8", "label": "QCD", "files": ["/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_0L_v1_events/QCD-4Jets_Bin-HT-1200to1500_TuneCP5_13p6TeV_madgraphMLM-pythia8/*.root"]},
+    {"name": "QCD-4Jets_Bin-HT-1500to2000_TuneCP5_13p6TeV_madgraphMLM-pythia8", "label": "QCD", "files": ["/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_0L_v1_events/QCD-4Jets_Bin-HT-1500to2000_TuneCP5_13p6TeV_madgraphMLM-pythia8/*.root"]},
+    {"name": "QCD-4Jets_Bin-HT-2000_TuneCP5_13p6TeV_madgraphMLM-pythia8", "label": "QCD", "files": ["/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_0L_v1_events/QCD-4Jets_Bin-HT-2000_TuneCP5_13p6TeV_madgraphMLM-pythia8/*.root"]},
+
+    {"name": "Wto2Q-3Jets_Bin-HT-100to400_TuneCP5_13p6TeV_madgraphMLM-pythia8", "label": "Wto2Q", "files": ["/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_0L_v1_events/Wto2Q-3Jets_Bin-HT-100to400_TuneCP5_13p6TeV_madgraphMLM-pythia8/*.root"]},
+    {"name": "Wto2Q-3Jets_Bin-HT-400to800_TuneCP5_13p6TeV_madgraphMLM-pythia8", "label": "Wto2Q", "files": ["/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_0L_v1_events/Wto2Q-3Jets_Bin-HT-400to800_TuneCP5_13p6TeV_madgraphMLM-pythia8/*.root"]},
+    {"name": "Wto2Q-3Jets_Bin-HT-800to1500_TuneCP5_13p6TeV_madgraphMLM-pythia8", "label": "Wto2Q", "files": ["/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_0L_v1_events/Wto2Q-3Jets_Bin-HT-800to1500_TuneCP5_13p6TeV_madgraphMLM-pythia8/*.root"]},
+    {"name": "Wto2Q-3Jets_Bin-HT-1500to2500_TuneCP5_13p6TeV_madgraphMLM-pythia8", "label": "Wto2Q", "files": ["/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_0L_v1_events/Wto2Q-3Jets_Bin-HT-1500to2500_TuneCP5_13p6TeV_madgraphMLM-pythia8/*.root"]},
+    {"name": "Wto2Q-3Jets_Bin-HT-2500_TuneCP5_13p6TeV_madgraphMLM-pythia8", "label": "Wto2Q", "files": ["/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_0L_v1_events/Wto2Q-3Jets_Bin-HT-2500_TuneCP5_13p6TeV_madgraphMLM-pythia8/*.root"]},
+
+    {"name": "Zto2Q-4Jets_Bin-HT-100to400_TuneCP5_13p6TeV_madgraphMLM-pythia8", "label": "Zto2Q", "files": ["/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_0L_v1_events/Zto2Q-4Jets_Bin-HT-100to400_TuneCP5_13p6TeV_madgraphMLM-pythia8/*.root"]},
+    {"name": "Zto2Q-4Jets_Bin-HT-400to800_TuneCP5_13p6TeV_madgraphMLM-pythia8", "label": "Zto2Q", "files": ["/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_0L_v1_events/Zto2Q-4Jets_Bin-HT-400to800_TuneCP5_13p6TeV_madgraphMLM-pythia8/*.root"]},
+    {"name": "Zto2Q-4Jets_Bin-HT-800to1500_TuneCP5_13p6TeV_madgraphMLM-pythia8", "label": "Zto2Q", "files": ["/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_0L_v1_events/Zto2Q-4Jets_Bin-HT-800to1500_TuneCP5_13p6TeV_madgraphMLM-pythia8/*.root"]},
+    {"name": "Zto2Q-4Jets_Bin-HT-1500to2500_TuneCP5_13p6TeV_madgraphMLM-pythia8", "label": "Zto2Q", "files": ["/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_0L_v1_events/Zto2Q-4Jets_Bin-HT-1500to2500_TuneCP5_13p6TeV_madgraphMLM-pythia8/*.root"]},
+    {"name": "Zto2Q-4Jets_Bin-HT-2500_TuneCP5_13p6TeV_madgraphMLM-pythia8", "label": "Zto2Q", "files": ["/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_0L_v1_events/Zto2Q-4Jets_Bin-HT-2500_TuneCP5_13p6TeV_madgraphMLM-pythia8/*.root"]}
+  ]
+}

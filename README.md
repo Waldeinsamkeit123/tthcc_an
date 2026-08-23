@@ -1,7 +1,8 @@
 # tthcc_an
 
 Analysis repository for Run 3 boosted `ttHcc` / `ttHbb` studies, including
-AK8 boosted Higgs tagger studies and a prototype event-level BDT workflow.
+AK8 boosted Higgs tagger studies, an event-level NN output study, and a
+prototype event-level BDT workflow.
 
 ## Overview
 
@@ -13,21 +14,24 @@ The original analysis framework is based on:
 The current focus of this repository is:
 
 - AK8 boosted Higgs tagger studies using Pepper-produced ROOT ntuples
+- a 2024 boosted `1L` event-level multiclass NN output study
 - a prototype 2024 `0L` event-level BDT workflow for `ttH`-enriched selection studies
 
 ## Repository Layout
 
 - `config/`: study configuration files
   - `config/event_bdt/`: event-BDT sample and training configs
+  - `config/nn_study/`: event-level NN-study configs
 - `scripts/`: runnable entrypoints and submission helpers
 - `src/`: core analysis code
   - `src/tthcc_an/event_bdt/`: event-BDT prototype modules
+  - `src/tthcc_an/nn_study/`: event-level NN score-study modules
 - `outputs/`: local study outputs
 - `condor/`: prepared HTCondor workflows and chunk outputs
 
 ## Main Entry Points
 
-This repository currently has two main user-facing workflows:
+The main user-facing workflows are:
 
 - boosted Higgs tagger studies:
 
@@ -39,6 +43,13 @@ python scripts/run_boosted_higgs_tagger_study.py
 
 ```bash
 python scripts/run_event_bdt.py
+```
+
+- event-level NN output study:
+
+```bash
+python scripts/run_nn_study.py \
+  --config config/nn_study/nn_study_2024_1l_v1.json
 ```
 
 - signal trigger-efficiency studies:
@@ -829,6 +840,249 @@ python scripts/run_boosted_higgs_tagger_study.py \
   --merge-chunks 'outputs/debug/*.npz' \
   --outdir outputs/debug/final
 ```
+
+## 2024 Event-Level NN Study
+
+The independent NN-study subsystem is:
+
+- entry point: `scripts/run_nn_study.py`
+- implementation: `src/tthcc_an/nn_study/`
+- shipping configs: `config/nn_study/nn_study_2024_{0l,1l}_v1.json`
+- ROOT inputs: `/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_{0L,1L}_v1_events`
+- Pepper normalization outputs: `/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_{0L,1L}_v1`
+
+The actual 1L ntuples contain 12 softmax outputs named:
+
+```text
+score_ttHcc  score_ttHbb  score_ttZcc  score_ttZbb  score_ttZqq  score_ttLF
+score_ttcj   score_ttcc   score_tt2c   score_ttbj   score_ttbb   score_tt2b
+```
+
+Both configs also declare the composite outputs `score_ttH`, `score_ttZ`,
+`score_ttX`, `score_Xbb`, `score_Xcc`, and `score_ttjets` under
+`auxiliary_scores`. They receive shape and expected-yield plots, but do not
+extend the mutually exclusive truth classes used by confusion matrices and
+pairwise ROC/AUC calculations. The 0L config additionally includes
+`score_qcd` as a full classification output with truth `n_gentop == 0`.
+
+The deployed 0L ONNX metadata lists 18 outputs, additionally including
+`zbb`, `zcc`, `zqq`, `wcq`, and `wqq`. Those five branches are not present in
+the current NNeval ROOT files. The 13 persisted branches, including
+`score_qcd`, sum to one within float precision, so NN-study argmax diagnostics
+use exactly those 13 available branches. The weighting summary records this
+ONNX/ntuple difference rather than inventing unavailable class scores.
+
+`score_ttZqq` is still present. The 12 scores sum to one within float
+precision in the inspected files. Truth labeling uses the current Pepper
+branches `higgs_decay`, `z_decay`, `n_gentop`, `tt_hf_flavor`, and
+`tt_hf_count`. The category convention is:
+
+- `ttHcc/ttHbb`: `higgs_decay == 4/5`
+- `ttZqq/ttZcc/ttZbb`: two generated tops and `z_decay == 1..3/4/5`
+- `ttLF`: two generated tops, no H/Z decay label, and `tt_hf_flavor == 0`
+- `ttcj/tt2c/ttcc`: charm flavor with `tt_hf_count <= 1/== 2/> 2`
+- `ttbj/tt2b/ttbb`: bottom flavor with `tt_hf_count <= 1/== 2/> 2`
+
+The files are written after the Pepper `HasTargetFatJet` cut, following
+`ReqMassWindow`. They have exactly one target fatjet in the inspected sample,
+while `nJet` can be as low as 3. Therefore the shipping config applies no
+additional event cut: an empty `study.selection` means all events already
+stored in the ntuple. Optional selections can be supplied in config or with
+`--selection`.
+
+The nominal sample composition follows the current 1L Pepper stitching:
+
+- `TTH-Hto2C`, `TTH-Hto2B`, and `TTZ-ZtoQQ` provide ttH/ttZ classes.
+- inclusive `TTto*` contributes only LF/charm classes.
+- `TTBBto*` and `TTto*-BBDPS` contribute only bottom classes.
+- data, `TTH-HtoNon2B`, single-top, W+jets, and unrelated ttV samples are not
+  part of this truth-class performance study.
+
+This avoids reusing the inclusive `TTto*` bottom component on top of the
+dedicated bottom samples. ROOT files without an `Events` tree are skipped and
+reported; `--max-files-per-sample` counts valid `Events` files.
+
+Run the study with:
+
+```bash
+source /cvmfs/sft.cern.ch/lcg/views/LCG_108/x86_64-el9-gcc15-opt/setup.sh
+
+python scripts/run_nn_study.py \
+  --config config/nn_study/nn_study_2024_1l_v1.json
+```
+
+Recommended smoke test:
+
+```bash
+python scripts/run_nn_study.py \
+  --config config/nn_study/nn_study_2024_1l_v1.json \
+  --max-files-per-sample 1 \
+  --outdir /tmp/nn_study_2024_1l_v1_smoke
+```
+
+The workflow writes per-class and auxiliary shape/expected-yield score PNGs, row/column
+normalized confusion matrices, one pairwise ROC PNG per available signal truth
+class, `pairwise_auc_matrix.png`, `nn_study_summary.json`, and
+`nn_study_summary.txt`. Shape plots normalize each truth class to unit area.
+Yield, confusion, and ROC/AUC products use:
+
+```text
+sample_norm = lumi_fb * xsec / gen_sumw
+analysis_weight = sample_norm * abs(weight)
+signed_bookkeeping_weight = sample_norm * weight
+```
+
+### Training-weight diagnostics
+
+Both configs enable an independent diagnostic mode:
+
+```bash
+python scripts/run_nn_study.py \
+  --config config/nn_study/nn_study_2024_1l_v1.json \
+  --only weighting-diagnostics
+
+python scripts/run_nn_study.py \
+  --config config/nn_study/nn_study_2024_0l_v1.json \
+  --only weighting-diagnostics
+```
+
+This mode reads only the persisted multiclass scores, truth and stitching
+branches, raw event weight, and the configured training reweight variables
+`MET_pt` and `MET_phi`. It writes:
+
+- `confusion_truth__analysis_weighted.png` for
+  `P(predicted class | truth class)` using the physical analysis weight
+- `confusion_truth__unweighted.png` using one entry per event
+- `confusion_truth__class_balanced.png`, where each truth class is rescaled to
+  unit total analysis weight
+- `confusion_pred__analysis_weighted.png` for the physical predicted-category
+  composition `P(truth class | predicted class)`
+- `pairwise_auc_matrix__{analysis_weighted,unweighted}.png`
+- `summaries/weighting_diagnostics.{json,txt}` and
+  `summaries/class_weight_comparison.{json,txt}`
+
+The class-balanced truth matrix is expected to equal the analysis-weighted
+truth matrix: row normalization cancels a class-wide scale. It is retained as
+an explicit definition check and must not be called training-weighted.
+
+The relevant standard implementation was traced through Weaver commit
+`a57c362bb42891e7d7dc997fd802b4bd15d978c8`, immediately before model
+deployment. The model-specific NanoTTH training checkout, command, network
+config, and auto-generated YAML were not found locally. In the standard Weaver
+path, class/bin sampling factors change DataLoader event multiplicities by
+random acceptance and repetition. The sampling weight is not passed to the
+default cross-entropy loss; accepted copies enter an unweighted loss that is
+averaged over the batch. A model-specific custom loss cannot be excluded
+without the missing network config.
+
+For the configured single wide `MET_pt`/`MET_phi` bin, the deterministic
+sampling score reduces to
+
+```text
+p_i = [class_weight[c] * abs(weight_i) / H[c]]
+      / P99_training(class_weight[class(i)] * abs(weight_i) / H[class(i)])
+```
+
+where `H[c]` is the training-population sum of `abs(weight)` in class `c`.
+With the default sampler, copies are accepted with probability
+`min(p_i, 1)` and the per-fetch repeat count is stochastic and capped at 10.
+Thus this is class-level flattening plus within-class `abs(weight)` sampling;
+the expected class totals are proportional to the configured class weights
+before clipping and fetch effects.
+
+Exact training-effective contributions cannot be reconstructed from the
+current NNeval ROOT files. The model-specific Weaver `.auto.yaml` reweight
+histograms, exact training population and percentile, DataLoader fetch
+partition, random seeds, and realized repeated indices are not available in
+the model directory or ntuples. Therefore no file named `training_weighted`
+is produced, and no class-balanced approximation is silently substituted.
+The existing expected-yield, QCD scan, mass-sculpting, composition, and
+physics ROC/AUC products continue to use `sample_norm * abs(weight)`.
+
+For each signal/background pair, the discriminator is
+`score_signal / (score_signal + score_background)`; a zero denominator maps
+to 0.5. The reported AUC is the standard area of signal efficiency (TPR) versus
+background efficiency (FPR), even though the displayed ROC axes are
+`x = signal efficiency` and `y = background efficiency`.
+
+The loader also retains `TargetFatJet_mass`, `TargetFatJet_msoftdrop`,
+`TargetFatJet_regressed_mass_generic`, `TargetFatJet_regressed_mass_x2p`,
+and `TargetFatJet_random_mass` during a full run.
+
+The 1L config enables a config-driven mass-sculpting study of
+`TargetFatJet_regressed_mass_generic`. It compares the uncut shape with:
+
+- `score_ttX > 0.4, 0.5, 0.6, 0.7, 0.8, 0.85, 0.9`
+- `score_ttLF < 0.01, 0.02, 0.05, 0.1`
+
+The configs produce each scan for five populations: all selected MC, the
+`TTH-Hto2C` sample, the `TTH-Hto2B` sample, the `TTZ-ZtoQQ` sample, and all
+remaining configured background samples after excluding those three ttH/ttZ
+samples. The three named samples are kept separate rather than merged. Curves use
+`sample_norm * abs(weight)` and are independently
+normalized to unit density over the plotted range. The range uses the weighted
+`0.5%` and `99.5%` mass quantiles plus 4% padding, with 45 equal-width bins.
+Each plot includes an uncut reference and a lower panel showing the retained
+fraction per mass bin. Machine-readable and text diagnostics are written to
+`summaries/mass_sculpting_summary.{json,txt}`.
+
+Run only this study, without loading unrelated score/analysis branches or
+computing score plots, confusion matrices, ROC curves, or AUCs:
+
+```bash
+python scripts/run_nn_study.py \
+  --config config/nn_study/nn_study_2024_1l_v1.json \
+  --only mass-sculpting
+```
+
+The 0L config runs the same `score_ttX` and `score_ttLF` scans and additionally
+runs `score_qcd < 0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, 0.1`.
+
+The `mass_sculpting.populations` entries support independent `samples` and
+`truth_categories` filters, plus `exclude_samples` for sample-level complements.
+Non-default populations are appended to output
+filenames, for example
+`mass_sculpting__TargetFatJet_regressed_mass_generic__score_ttX__ttHcc_sample.png`.
+Together with `variables` and `scans`, this allows later category-specific or
+0L extensions without adding a new script. This mode still reads the selected
+ROOT events because no NN-study event cache/plot-only payload exists yet.
+
+The 0L config also enables a dedicated QCD-score working-point scan using the
+actual `score_qcd` branch and the cut direction `score_qcd < cut`. It applies
+no extra `nJet` requirement: the population is the same configured MC sample
+set after the existing per-sample stitching and empty NN-study selection. The
+named candidate thresholds are `0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05,
+0.1`, supplemented by a fine log-spaced scan from `1e-6` to `1`.
+
+The main groups are `ttHcc`, QCD truth (`n_gentop == 0`), and `tt+X = ttLF +
+ttcj + ttcc + tt2c + ttbj + ttbb + tt2b`. Consequently, the QCD truth group
+also contains selected `Wto2Q`/`Zto2Q` sample events with `n_gentop == 0`.
+Expected yields and efficiencies use `sample_norm * abs(weight)`. The current
+scan is MC-only; data files are not mixed into normalized expected yields.
+
+Run only the QCD-score scan, without regular score, confusion, ROC/AUC, or
+mass-sculpting products:
+
+```bash
+python scripts/run_nn_study.py \
+  --config config/nn_study/nn_study_2024_0l_v1.json \
+  --only qcd-score-scan
+```
+
+It writes QCD-scan PNG diagnostics under `plots/qcd_score_scan/` and the complete
+fine scan plus candidate table to `summaries/qcd_score_scan.{json,txt}`. The
+diagnostics include weighted score/yield curves, ttHcc and QCD efficiencies,
+QCD rejection, QCD/tt+X, a ROC-like working-point curve, and relative
+`S/sqrt(B)` for `B=QCD` and `B=QCD+tt+X`. These significance values are
+diagnostics only and do not select a working point automatically.
+
+The additional `qcd_score_distribution.png` compares independently normalized
+weighted shapes for `ttHcc`, `tt+light`, `tt+>=1c`, `tt+>=1b`, and QCD using
+logarithmic bins in the linear `score_qcd` value. Its vertical line and shaded
+high-score rejected region are controlled only by
+`qcd_score_scan.reference_threshold`; this is a visualization reference, not
+a chosen final cut. `qcd_score_distribution__yield.png` provides the same
+grouping without unit normalization.
 
 ## Environment
 
