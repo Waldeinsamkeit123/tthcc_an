@@ -63,6 +63,8 @@ class NnMassPopulation:
     truth_categories: list[str] | None
     samples: list[str] | None
     exclude_samples: list[str]
+    sample_labels: list[str] | None
+    exclude_sample_labels: list[str]
 
 
 @dataclass(frozen=True)
@@ -116,6 +118,7 @@ class NnStudyConfig:
     repo_root: Path
     channel: str
     input_location: str
+    sample_file_pattern: str | None
     outdir: Path
     tree_name: str
     weight_branch: str
@@ -273,6 +276,36 @@ def _load_mass_sculpting(
             )
         if len(excluded_samples) != len(set(excluded_samples)):
             raise ValueError("Excluded mass-sculpting samples must be unique.")
+        available_sample_labels = {sample.label for sample in samples}
+        raw_sample_labels = population_payload.get("sample_labels", "all")
+        if raw_sample_labels == "all":
+            population_sample_labels = None
+        else:
+            population_sample_labels = [
+                str(label) for label in list(raw_sample_labels)
+            ]
+            unknown_sample_labels = sorted(
+                set(population_sample_labels) - available_sample_labels
+            )
+            if unknown_sample_labels:
+                raise ValueError(
+                    "Unknown mass-sculpting sample labels: "
+                    + ", ".join(unknown_sample_labels)
+                )
+        excluded_sample_labels = [
+            str(label)
+            for label in list(population_payload.get("exclude_sample_labels", []))
+        ]
+        unknown_excluded_sample_labels = sorted(
+            set(excluded_sample_labels) - available_sample_labels
+        )
+        if unknown_excluded_sample_labels:
+            raise ValueError(
+                "Unknown excluded mass-sculpting sample labels: "
+                + ", ".join(unknown_excluded_sample_labels)
+            )
+        if len(excluded_sample_labels) != len(set(excluded_sample_labels)):
+            raise ValueError("Excluded mass-sculpting sample labels must be unique.")
         populations.append(
             NnMassPopulation(
                 name=str(population_payload.get("name", "all_selected_mc")),
@@ -280,6 +313,8 @@ def _load_mass_sculpting(
                 truth_categories=population_truths,
                 samples=population_samples,
                 exclude_samples=excluded_samples,
+                sample_labels=population_sample_labels,
+                exclude_sample_labels=excluded_sample_labels,
             )
         )
     _unique_names([population.name for population in populations], "mass population")
@@ -632,17 +667,44 @@ def load_nn_study_config(
     _unique_names([item.name for item in truths], "truth category")
     if [item.name for item in scores] != [item.name for item in truths]:
         raise ValueError("Score classes and truth categories must use the same names in the same order.")
+    input_location = str(study.get("input_location", ""))
+    raw_sample_file_pattern = study.get("sample_file_pattern")
+    sample_file_pattern = (
+        None if raw_sample_file_pattern is None else str(raw_sample_file_pattern)
+    )
     samples: list[NnSample] = []
     for entry in list(payload.get("samples", [])):
-        patterns = []
-        for pattern in list(entry["files"]):
-            patterns.append(str(_resolve_path(str(pattern), config_path.parent)))
-        files = expand_file_patterns(patterns)
         name = str(entry["name"])
+        dataset = str(entry.get("dataset", name))
+        if sample_file_pattern is not None:
+            try:
+                raw_patterns = [
+                    sample_file_pattern.format(
+                        input_location=input_location.rstrip("/"),
+                        name=name,
+                        dataset=dataset,
+                    )
+                ]
+            except KeyError as exc:
+                raise ValueError(
+                    "study.sample_file_pattern supports only {input_location}, "
+                    "{name}, and {dataset}."
+                ) from exc
+        else:
+            if "files" not in entry:
+                raise ValueError(
+                    f"Sample '{name}' needs files when study.sample_file_pattern is unset."
+                )
+            raw_patterns = [str(pattern) for pattern in list(entry["files"])]
+        patterns = [
+            str(_resolve_path(pattern, config_path.parent))
+            for pattern in raw_patterns
+        ]
+        files = expand_file_patterns(patterns)
         samples.append(
             NnSample(
                 name=name,
-                dataset=str(entry.get("dataset", name)),
+                dataset=dataset,
                 label=str(entry.get("label", name)),
                 files=files,
                 selection=str(entry.get("selection", "")),
@@ -672,7 +734,8 @@ def load_nn_study_config(
         config_path=config_path,
         repo_root=repo_root_path,
         channel=str(study.get("channel", "unknown")),
-        input_location=str(study.get("input_location", "")),
+        input_location=input_location,
+        sample_file_pattern=sample_file_pattern,
         outdir=_resolve_outdir(repo_root_path, study.get("outdir"), outdir),
         tree_name=str(study.get("tree_name", DEFAULT_TREE_NAME)),
         weight_branch=str(study.get("weight_branch", DEFAULT_WEIGHT_BRANCH)),

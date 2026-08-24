@@ -44,6 +44,20 @@ def _population_mask(
             index_by_name[name] for name in population.exclude_samples
         ]
         mask &= ~np.isin(dataset.sample_index, excluded_indices)
+    if population.sample_labels is not None:
+        included_indices = [
+            index
+            for index, sample in enumerate(config.samples)
+            if sample.label in population.sample_labels
+        ]
+        mask &= np.isin(dataset.sample_index, included_indices)
+    if population.exclude_sample_labels:
+        excluded_indices = [
+            index
+            for index, sample in enumerate(config.samples)
+            if sample.label in population.exclude_sample_labels
+        ]
+        mask &= ~np.isin(dataset.sample_index, excluded_indices)
     return mask
 
 
@@ -270,6 +284,8 @@ def _format_summary(payload: dict[str, Any]) -> str:
                 f"Population: {population['label']} ({population['name']})",
                 f"  Samples: {population['samples']}",
                 f"  Excluded samples: {population['exclude_samples']}",
+                f"  Sample labels: {population['sample_labels']}",
+                f"  Excluded sample labels: {population['exclude_sample_labels']}",
                 f"  Truth categories: {population['truth_categories']}",
             ]
         )
@@ -317,6 +333,12 @@ def run_mass_sculpting(
                 "label": population.label,
                 "samples": "all" if population.samples is None else population.samples,
                 "exclude_samples": population.exclude_samples,
+                "sample_labels": (
+                    "all"
+                    if population.sample_labels is None
+                    else population.sample_labels
+                ),
+                "exclude_sample_labels": population.exclude_sample_labels,
                 "truth_categories": (
                     "all"
                     if population.truth_categories is None

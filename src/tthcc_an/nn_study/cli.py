@@ -141,7 +141,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             config.weighting_diagnostics.reweight_variables
         )
     if args.only is None:
-        loaded_analysis_branches = list(config.analysis_branches)
+        loaded_analysis_branches.extend(config.analysis_branches)
     loaded_score_names = list(dict.fromkeys(loaded_score_names))
     loaded_analysis_branches = list(dict.fromkeys(loaded_analysis_branches))
     dataset = load_nn_dataset(
@@ -283,6 +283,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "channel": config.channel,
         "config": str(config.config_path),
         "input_location": config.input_location,
+        "sample_file_pattern": config.sample_file_pattern,
         "output_directory": str(config.outdir),
         "tree_name": config.tree_name,
         "selection": config.selection,

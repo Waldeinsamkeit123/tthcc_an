@@ -848,8 +848,8 @@ The independent NN-study subsystem is:
 - entry point: `scripts/run_nn_study.py`
 - implementation: `src/tthcc_an/nn_study/`
 - shipping configs: `config/nn_study/nn_study_2024_{0l,1l}_v1.json`
-- ROOT inputs: `/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_{0L,1L}_v1_events`
-- Pepper normalization outputs: `/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_{0L,1L}_v1`
+- ROOT inputs: `/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_{0L,1L}_v1_pred_RealMass_events`
+- Pepper normalization outputs: `/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_{0L,1L}_v1_pred_RealMass`
 
 The actual 1L ntuples contain 12 softmax outputs named:
 
@@ -892,7 +892,8 @@ stored in the ntuple. Optional selections can be supplied in config or with
 
 The nominal sample composition follows the current 1L Pepper stitching:
 
-- `TTH-Hto2C`, `TTH-Hto2B`, and `TTZ-ZtoQQ` provide ttH/ttZ classes.
+- Three decay-channel datasets each provide the ttHcc, ttHbb, and ttZ samples;
+  stable sample labels combine each set for population-level plots.
 - inclusive `TTto*` contributes only LF/charm classes.
 - `TTBBto*` and `TTto*-BBDPS` contribute only bottom classes.
 - data, `TTH-HtoNon2B`, single-top, W+jets, and unrelated ttV samples are not
@@ -1016,9 +1017,9 @@ The 1L config enables a config-driven mass-sculpting study of
 - `score_ttLF < 0.01, 0.02, 0.05, 0.1`
 
 The configs produce each scan for five populations: all selected MC, the
-`TTH-Hto2C` sample, the `TTH-Hto2B` sample, the `TTZ-ZtoQQ` sample, and all
-remaining configured background samples after excluding those three ttH/ttZ
-samples. The three named samples are kept separate rather than merged. Curves use
+label-combined ttHcc sample, the label-combined ttHbb sample, the label-combined
+ttZ sample, and all remaining configured background samples after excluding
+those three labels. The three physics populations are kept separate. Curves use
 `sample_norm * abs(weight)` and are independently
 normalized to unit density over the plotted range. The range uses the weighted
 `0.5%` and `99.5%` mass quantiles plus 4% padding, with 45 equal-width bins.
@@ -1038,14 +1039,22 @@ python scripts/run_nn_study.py \
 The 0L config runs the same `score_ttX` and `score_ttLF` scans and additionally
 runs `score_qcd < 0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, 0.1`.
 
-The `mass_sculpting.populations` entries support independent `samples` and
-`truth_categories` filters, plus `exclude_samples` for sample-level complements.
+The `mass_sculpting.populations` entries support independent `samples`,
+`sample_labels`, and `truth_categories` filters, plus corresponding exclusion
+fields for sample-level complements.
 Non-default populations are appended to output
 filenames, for example
 `mass_sculpting__TargetFatJet_regressed_mass_generic__score_ttX__ttHcc_sample.png`.
 Together with `variables` and `scans`, this allows later category-specific or
 0L extensions without adding a new script. This mode still reads the selected
 ROOT events because no NN-study event cache/plot-only payload exists yet.
+
+Both configs set `study.sample_file_pattern` to
+`{input_location}/{name}/*.root`; this global template replaces per-sample
+`files` entries. For a future prediction production with the same directory
+layout, update only `study.input_location`, `normalization.gen_sumw_file`, and
+the desired `study.outdir`. Sample rows only define dataset names, labels, and
+optional stitching selections.
 
 The 0L config also enables a dedicated QCD-score working-point scan using the
 actual `score_qcd` branch and the cut direction `score_qcd < cut`. It applies

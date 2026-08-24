@@ -1,6 +1,6 @@
 {
   "normalization": {
-    "gen_sumw_file": "/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_1L_v1/gen_sumws.json",
+    "gen_sumw_file": "/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_1L_v1_pred_RealMass/gen_sumws.json",
     "xsec_file": "/eos/user/h/hanw/ttHcc/tthcc_an/crosssections_run3.json",
     "lumi_fb": 109.08
   },
@@ -8,8 +8,9 @@
     "channel": "2024 boosted 1L",
     "year": "2024",
     "energy_tev": 13.6,
-    "input_location": "/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_1L_v1_events",
-    "outdir": "outputs/nn_study_2024_1l_v1",
+    "input_location": "/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_1L_v1_pred_RealMass_events",
+    "sample_file_pattern": "{input_location}/{name}/*.root",
+    "outdir": "outputs/nn_study_2024_1l_v1_predMass",
     "tree_name": "Events",
     "weight_branch": "weight",
     "selection": "",
@@ -19,7 +20,7 @@
       "nJet",
       "nCleanedJet",
       "nLepton",
-      "nFatJet",
+      "nfatjet",
       "nTargetFatJet",
       "TargetFatJet_mass",
       "TargetFatJet_msoftdrop",
@@ -98,36 +99,26 @@
       {
         "name": "ttHcc_sample",
         "label": "ttHcc sample",
-        "samples": [
-          "TTH-Hto2C_Par-M-125_TuneCP5_13p6TeV_powheg-pythia8"
-        ],
+        "sample_labels": ["ttHcc"],
         "truth_categories": "all"
       },
       {
         "name": "ttHbb_sample",
         "label": "ttHbb sample",
-        "samples": [
-          "TTH-Hto2B_Par-M-125_TuneCP5_13p6TeV_powheg-pythia8"
-        ],
+        "sample_labels": ["ttHbb"],
         "truth_categories": "all"
       },
       {
         "name": "ttZ_sample",
         "label": "ttZ sample",
-        "samples": [
-          "TTZ-ZtoQQ-1Jets_TuneCP5_13p6TeV_amcatnloFXFXold-pythia8"
-        ],
+        "sample_labels": ["ttZ"],
         "truth_categories": "all"
       },
       {
         "name": "all_background_samples",
         "label": "All background samples (excluding ttH/ttZ)",
         "samples": "all",
-        "exclude_samples": [
-          "TTH-Hto2C_Par-M-125_TuneCP5_13p6TeV_powheg-pythia8",
-          "TTH-Hto2B_Par-M-125_TuneCP5_13p6TeV_powheg-pythia8",
-          "TTZ-ZtoQQ-1Jets_TuneCP5_13p6TeV_amcatnloFXFXold-pythia8"
-        ],
+        "exclude_sample_labels": ["ttHcc", "ttHbb", "ttZ"],
         "truth_categories": "all"
       }
     ],
@@ -190,19 +181,25 @@
     {"name": "tt2b", "label": "tt2b", "expression": "(n_gentop == 2) & (tt_hf_flavor == 5) & (tt_hf_count == 2) & (higgs_decay == 0) & (z_decay == 0)", "color": "forestgreen"}
   ],
   "samples": [
-    {"name": "TTH-Hto2C_Par-M-125_TuneCP5_13p6TeV_powheg-pythia8", "label": "ttHcc", "files": ["/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_1L_v1_events/TTH-Hto2C_Par-M-125_TuneCP5_13p6TeV_powheg-pythia8/*.root"]},
-    {"name": "TTH-Hto2B_Par-M-125_TuneCP5_13p6TeV_powheg-pythia8", "label": "ttHbb", "files": ["/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_1L_v1_events/TTH-Hto2B_Par-M-125_TuneCP5_13p6TeV_powheg-pythia8/*.root"]},
-    {"name": "TTZ-ZtoQQ-1Jets_TuneCP5_13p6TeV_amcatnloFXFXold-pythia8", "label": "ttZ", "files": ["/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_1L_v1_events/TTZ-ZtoQQ-1Jets_TuneCP5_13p6TeV_amcatnloFXFXold-pythia8/*.root"]},
+    {"name": "ttH-Hto2C_M-125_TTTo2L2Nu_TuneCP5_13p6TeV-powheg-pythia8", "label": "ttHcc"},
+    {"name": "ttH-Hto2C_M-125_TTToHadronic_TuneCP5_13p6TeV-powheg-pythia", "label": "ttHcc"},
+    {"name": "ttH-Hto2C_M-125_TTToSemiLep_TuneCP5_13p6TeV-powheg-pythia8", "label": "ttHcc"},
+    {"name": "TTH-Hto2B-TTto2L2Nu_Par-M-125_TuneCP5_13p6TeV_powheg-pythia8", "label": "ttHbb"},
+    {"name": "TTH-Hto2B-TTto4Q_Par-M-125_TuneCP5_13p6TeV_powheg-pythia8", "label": "ttHbb"},
+    {"name": "TTH-Hto2B-TTtoLNu2Q_Par-M-125_TuneCP5_13p6TeV_powheg-pythia8", "label": "ttHbb"},
+    {"name": "ttZ-Zto2Q_M-125_TTTo2L2Nu_TuneCP5_13p6TeV-powheg-pythia8", "label": "ttZ"},
+    {"name": "ttZ-Zto2Q_M-125_TTToHadronic_TuneCP5_13p6TeV-powheg-pythia8", "label": "ttZ"},
+    {"name": "ttZ-Zto2Q_M-125_TTToSemiLep_TuneCP5_13p6TeV-powheg-pythia8", "label": "ttZ"},
 
-    {"name": "TTtoLNu2Q_TuneCP5_13p6TeV_powheg-pythia8", "label": "tt+LF/c", "selection": "tt_hf_flavor != 5", "files": ["/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_1L_v1_events/TTtoLNu2Q_TuneCP5_13p6TeV_powheg-pythia8/*.root"]},
-    {"name": "TTto2L2Nu_TuneCP5_13p6TeV_powheg-pythia8", "label": "tt+LF/c", "selection": "tt_hf_flavor != 5", "files": ["/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_1L_v1_events/TTto2L2Nu_TuneCP5_13p6TeV_powheg-pythia8/*.root"]},
-    {"name": "TTto4Q_TuneCP5_13p6TeV_powheg-pythia8", "label": "tt+LF/c", "selection": "tt_hf_flavor != 5", "files": ["/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_1L_v1_events/TTto4Q_TuneCP5_13p6TeV_powheg-pythia8/*.root"]},
+    {"name": "TTtoLNu2Q_TuneCP5_13p6TeV_powheg-pythia8", "label": "tt+LF/c", "selection": "tt_hf_flavor != 5"},
+    {"name": "TTto2L2Nu_TuneCP5_13p6TeV_powheg-pythia8", "label": "tt+LF/c", "selection": "tt_hf_flavor != 5"},
+    {"name": "TTto4Q_TuneCP5_13p6TeV_powheg-pythia8", "label": "tt+LF/c", "selection": "tt_hf_flavor != 5"},
 
-    {"name": "TTBBtoLNu2Q_TuneCP5_13p6TeV_powheg-pythia8", "label": "tt+b", "selection": "tt_hf_flavor == 5", "files": ["/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_1L_v1_events/TTBBtoLNu2Q_TuneCP5_13p6TeV_powheg-pythia8/*.root"]},
-    {"name": "TTBBto2L2Nu_TuneCP5_13p6TeV_powheg-pythia8", "label": "tt+b", "selection": "tt_hf_flavor == 5", "files": ["/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_1L_v1_events/TTBBto2L2Nu_TuneCP5_13p6TeV_powheg-pythia8/*.root"]},
-    {"name": "TTBBto4Q_TuneCP5_13p6TeV_powheg-pythia8", "label": "tt+b", "selection": "tt_hf_flavor == 5", "files": ["/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_1L_v1_events/TTBBto4Q_TuneCP5_13p6TeV_powheg-pythia8/*.root"]},
-    {"name": "TTtoLNu2Q-BBDPS_TuneCP5_13p6TeV_powheg-pythia8", "label": "tt+b DPS", "selection": "tt_hf_flavor == 5", "files": ["/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_1L_v1_events/TTtoLNu2Q-BBDPS_TuneCP5_13p6TeV_powheg-pythia8/*.root"]},
-    {"name": "TTto2L2Nu-BBDPS_TuneCP5_13p6TeV_powheg-pythia8", "label": "tt+b DPS", "selection": "tt_hf_flavor == 5", "files": ["/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_1L_v1_events/TTto2L2Nu-BBDPS_TuneCP5_13p6TeV_powheg-pythia8/*.root"]},
-    {"name": "TTto4Q-BBDPS_TuneCP5_13p6TeV_powheg-pythia8", "label": "tt+b DPS", "selection": "tt_hf_flavor == 5", "files": ["/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_1L_v1_events/TTto4Q-BBDPS_TuneCP5_13p6TeV_powheg-pythia8/*.root"]}
+    {"name": "TTBBtoLNu2Q_TuneCP5_13p6TeV_powheg-pythia8", "label": "tt+b", "selection": "tt_hf_flavor == 5"},
+    {"name": "TTBBto2L2Nu_TuneCP5_13p6TeV_powheg-pythia8", "label": "tt+b", "selection": "tt_hf_flavor == 5"},
+    {"name": "TTBBto4Q_TuneCP5_13p6TeV_powheg-pythia8", "label": "tt+b", "selection": "tt_hf_flavor == 5"},
+    {"name": "TTtoLNu2Q-BBDPS_TuneCP5_13p6TeV_powheg-pythia8", "label": "tt+b DPS", "selection": "tt_hf_flavor == 5"},
+    {"name": "TTto2L2Nu-BBDPS_TuneCP5_13p6TeV_powheg-pythia8", "label": "tt+b DPS", "selection": "tt_hf_flavor == 5"},
+    {"name": "TTto4Q-BBDPS_TuneCP5_13p6TeV_powheg-pythia8", "label": "tt+b DPS", "selection": "tt_hf_flavor == 5"}
   ]
 }

@@ -523,8 +523,13 @@ event-BDT 原型额外约定：
 
 NN study 额外约定：
 
-- 当前 input 是 `/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_1L_v1_events`
-- normalization metadata 是 `/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_1L_v1/gen_sumws.json`
+- 当前 input 是
+  `/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_{0L,1L}_v1_pred_RealMass_events`
+- normalization metadata 是
+  `/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_{0L,1L}_v1_pred_RealMass/gen_sumws.json`
+- 两个 config 使用 `study.sample_file_pattern = {input_location}/{name}/*.root`；
+  同目录结构的新 prediction 只需改 `input_location`、`gen_sumw_file` 和 `outdir`，
+  不要恢复逐 sample 的绝对 `files` 路径
 - 实际 NN 分支使用 `score_<class>`，包含 `score_ttZqq`；12 个 score class 与 truth class 必须同名同序
 - truth 分支是 `higgs_decay`, `z_decay`, `n_gentop`, `tt_hf_flavor`, `tt_hf_count`
 - truth 定义保持 resolved/Pepper 现行约定；`tt_hf_count` 的 1/2/>2 分别对应 single-extra、double-extra、pair-extra 类，不要静默重定义
@@ -538,10 +543,9 @@ NN study 额外约定：
   - `score_ttLF < 0.01, 0.02, 0.05, 0.1`
 - mass config 使用 `populations` 列表；每项可分别通过 `samples` 精确选择
   config sample name，并通过 `truth_categories` 进一步选择 truth 类
-- 当前 0L/1L populations 包括全部 selected MC、三个彼此独立的
-  `ttHcc_sample` (`TTH-Hto2C`)、`ttHbb_sample` (`TTH-Hto2B`) 和
-  `ttZ_sample` (`TTZ-ZtoQQ`)，以及通过 `exclude_samples` 排除这三个样本后的
-  `all_background_samples`；不要再次把三个 ttH/ttZ 样本合并成一个 population
+- 当前 ttHcc、ttHbb、ttZ 各由三个 decay-channel dataset 组成，mass populations
+  通过稳定的 sample label 分别聚合为 `ttHcc_sample`、`ttHbb_sample`、
+  `ttZ_sample`；`all_background_samples` 通过 `exclude_sample_labels` 排除这三类
 - 0L 除 `score_ttX` 和 `score_ttLF` 外，还扫描
   `score_qcd < 0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, 0.1`
 - 0L 另有配置驱动的 `qcd_score_scan`：实际使用 `score_qcd < cut`，候选点与
