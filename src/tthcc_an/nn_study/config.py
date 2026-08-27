@@ -76,6 +76,24 @@ class NnMassSculptingConfig:
 
 
 @dataclass(frozen=True)
+class NnScoreSignificanceScan:
+    score_name: str
+    score_branch: str
+    direction: str
+    scan_min: float
+    scan_max: float
+    scan_points: int
+
+
+@dataclass(frozen=True)
+class NnScoreSignificanceConfig:
+    enabled: bool
+    signals: list[str]
+    metric: str
+    scans: list[NnScoreSignificanceScan]
+
+
+@dataclass(frozen=True)
 class NnQcdScoreGroup:
     name: str
     label: str
@@ -100,6 +118,9 @@ class NnQcdScoreScanConfig:
     working_point_score_range: tuple[float, float]
     reference_threshold: float
     distribution_groups: list[NnQcdScoreGroup]
+    significance_enabled: bool
+    significance_signals: list[str]
+    significance_metric: str
 
 
 @dataclass(frozen=True)
@@ -138,6 +159,7 @@ class NnStudyConfig:
     max_files_per_sample: int | None
     plot_options: dict[str, Any]
     mass_sculpting: NnMassSculptingConfig
+    score_significance: NnScoreSignificanceConfig
     qcd_score_scan: NnQcdScoreScanConfig
     weighting_diagnostics: NnWeightingDiagnosticsConfig
     validate_auc_with_sklearn: bool
@@ -381,6 +403,80 @@ def _load_mass_sculpting(
     )
 
 
+def _load_score_significance(
+    payload: dict[str, Any],
+    scores: list[NnScoreClass],
+    truths: list[NnTruthCategory],
+) -> NnScoreSignificanceConfig:
+    significance_payload = dict(payload.get("score_significance", {}))
+    enabled = bool(significance_payload.get("enabled", False))
+    metric = str(
+        significance_payload.get("metric", "s_over_sqrt_s_plus_b")
+    )
+    if metric != "s_over_sqrt_s_plus_b":
+        raise ValueError(
+            "score_significance.metric must be 's_over_sqrt_s_plus_b'."
+        )
+
+    truth_names = {truth.name for truth in truths}
+    signals = [
+        str(name) for name in list(significance_payload.get("signals", []))
+    ]
+    unknown_signals = sorted(set(signals) - truth_names)
+    if unknown_signals:
+        raise ValueError(
+            "Unknown score-significance signals: " + ", ".join(unknown_signals)
+        )
+    if len(signals) != len(set(signals)):
+        raise ValueError("Score-significance signals must be unique.")
+
+    score_by_reference: dict[str, NnScoreClass] = {}
+    for score in scores:
+        score_by_reference[score.name] = score
+        score_by_reference[score.branch] = score
+    scans: list[NnScoreSignificanceScan] = []
+    for entry in list(significance_payload.get("scans", [])):
+        reference = str(entry["score"])
+        if reference not in score_by_reference:
+            raise ValueError(f"Unknown score-significance score '{reference}'.")
+        score = score_by_reference[reference]
+        direction = str(entry["direction"])
+        if direction not in {"<", ">"}:
+            raise ValueError("Score-significance direction must be '<' or '>'.")
+        scan_min = float(entry["min"])
+        scan_max = float(entry["max"])
+        scan_points = int(entry["points"])
+        if not scan_min < scan_max:
+            raise ValueError(
+                f"Score-significance scan '{reference}' requires min < max."
+            )
+        if scan_points < 2:
+            raise ValueError(
+                f"Score-significance scan '{reference}' needs at least two points."
+            )
+        scans.append(
+            NnScoreSignificanceScan(
+                score_name=score.name,
+                score_branch=score.branch,
+                direction=direction,
+                scan_min=scan_min,
+                scan_max=scan_max,
+                scan_points=scan_points,
+            )
+        )
+    _unique_names([scan.score_name for scan in scans], "score-significance scan")
+    if enabled and (not signals or not scans):
+        raise ValueError(
+            "Enabled score_significance requires non-empty signals and scans."
+        )
+    return NnScoreSignificanceConfig(
+        enabled=enabled,
+        signals=signals,
+        metric=metric,
+        scans=scans,
+    )
+
+
 def _load_qcd_score_scan(
     payload: dict[str, Any],
     scores: list[NnScoreClass],
@@ -527,6 +623,34 @@ def _load_qcd_score_scan(
             "Enabled qcd_score_scan is missing distribution groups: "
             + ", ".join(missing_distribution_groups)
         )
+
+    significance_payload = dict(scan_payload.get("significance", {}))
+    significance_enabled = bool(significance_payload.get("enabled", False))
+    significance_metric = str(
+        significance_payload.get("metric", "s_over_sqrt_s_plus_b")
+    )
+    if significance_metric != "s_over_sqrt_s_plus_b":
+        raise ValueError(
+            "qcd_score_scan.significance.metric must be "
+            "'s_over_sqrt_s_plus_b'."
+        )
+    significance_signals = [
+        str(name) for name in list(significance_payload.get("signals", []))
+    ]
+    unknown_significance_signals = sorted(
+        set(significance_signals) - truth_names
+    )
+    if unknown_significance_signals:
+        raise ValueError(
+            "Unknown QCD-score significance signals: "
+            + ", ".join(unknown_significance_signals)
+        )
+    if len(significance_signals) != len(set(significance_signals)):
+        raise ValueError("QCD-score significance signals must be unique.")
+    if enabled and significance_enabled and not significance_signals:
+        raise ValueError(
+            "Enabled qcd_score_scan significance requires non-empty signals."
+        )
     return NnQcdScoreScanConfig(
         enabled=enabled,
         score_name=score.name,
@@ -543,6 +667,9 @@ def _load_qcd_score_scan(
         working_point_score_range=(raw_score_range[0], raw_score_range[1]),
         reference_threshold=reference_threshold,
         distribution_groups=distribution_groups,
+        significance_enabled=significance_enabled,
+        significance_signals=significance_signals,
+        significance_metric=significance_metric,
     )
 
 
@@ -624,6 +751,7 @@ def load_nn_study_config(
     outdir: str | None = None,
     selection: str | None = None,
     max_files_per_sample: int | None = None,
+    discover_sample_files: bool = True,
 ) -> NnStudyConfig:
     config_path = Path(path).resolve()
     repo_root_path = Path(repo_root).resolve()
@@ -700,7 +828,7 @@ def load_nn_study_config(
             str(_resolve_path(pattern, config_path.parent))
             for pattern in raw_patterns
         ]
-        files = expand_file_patterns(patterns)
+        files = expand_file_patterns(patterns) if discover_sample_files else []
         samples.append(
             NnSample(
                 name=name,
@@ -714,6 +842,7 @@ def load_nn_study_config(
         raise ValueError("Config field 'samples' must be a non-empty list.")
     _unique_names([sample.name for sample in samples], "sample")
     mass_sculpting = _load_mass_sculpting(payload, all_scores, truths, samples)
+    score_significance = _load_score_significance(payload, all_scores, truths)
     qcd_score_scan = _load_qcd_score_scan(payload, all_scores, truths)
     weighting_diagnostics = _load_weighting_diagnostics(payload, scores)
 
@@ -757,6 +886,7 @@ def load_nn_study_config(
         max_files_per_sample=effective_max_files,
         plot_options=dict(payload.get("plot", {})),
         mass_sculpting=mass_sculpting,
+        score_significance=score_significance,
         qcd_score_scan=qcd_score_scan,
         weighting_diagnostics=weighting_diagnostics,
         validate_auc_with_sklearn=bool(study.get("validate_auc_with_sklearn", True)),

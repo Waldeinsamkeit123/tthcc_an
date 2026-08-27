@@ -1,16 +1,16 @@
 {
   "normalization": {
-    "gen_sumw_file": "/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_0L_v1_pred_RealMass/gen_sumws.json",
+    "gen_sumw_file": "/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_1L_v3/gen_sumws.json",
     "xsec_file": "/eos/user/h/hanw/ttHcc/tthcc_an/crosssections_run3.json",
     "lumi_fb": 109.08
   },
   "study": {
-    "channel": "2024 boosted 0L",
+    "channel": "2024 boosted 1L NN v3 (zero-mass training)",
     "year": "2024",
     "energy_tev": 13.6,
-    "input_location": "/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_0L_v1_pred_RealMass_events",
+    "input_location": "/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_1L_v3_event",
     "sample_file_pattern": "{input_location}/{name}/*.root",
-    "outdir": "outputs/nn_study_2024_0l_v1_predMass",
+    "outdir": "outputs/nn_study_2024_1l_v3_zeroMass",
     "tree_name": "Events",
     "weight_branch": "weight",
     "selection": "",
@@ -19,6 +19,7 @@
     "analysis_branches": [
       "nJet",
       "nCleanedJet",
+      "nLepton",
       "nfatjet",
       "nTargetFatJet",
       "TargetFatJet_mass",
@@ -69,8 +70,7 @@
       "tt2c": 1.0,
       "ttbj": 1.0,
       "ttbb": 1.0,
-      "tt2b": 1.0,
-      "qcd": 0.5
+      "tt2b": 1.0
     },
     "key_auc_pairs": [
       ["ttHcc", "ttHbb"],
@@ -80,89 +80,11 @@
     ],
     "model_output_classes": [
       "ttHcc", "ttHbb", "ttZqq", "ttZcc", "ttZbb", "ttLF",
-      "ttcj", "ttcc", "tt2c", "ttbj", "ttbb", "tt2b",
-      "zbb", "zcc", "zqq", "wcq", "wqq", "qcd"
+      "ttcj", "tt2c", "ttcc", "ttbj", "tt2b", "ttbb"
     ],
     "persisted_score_classes": [
       "ttHcc", "ttHbb", "ttZcc", "ttZbb", "ttZqq", "ttLF",
-      "ttcj", "ttcc", "tt2c", "ttbj", "ttbb", "tt2b", "qcd"
-    ]
-  },
-  "qcd_score_scan": {
-    "enabled": true,
-    "score": "score_qcd",
-    "direction": "<",
-    "candidate_thresholds": [0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, 0.1],
-    "scan_min": 0.000001,
-    "scan_max": 1.0,
-    "scan_points": 121,
-    "distribution_bins": 60,
-    "distribution_log10_range": [-6.0, 0.0],
-    "working_point_bins": 25,
-    "working_point_score_range": [0.00001, 1.0],
-    "reference_threshold": 0.001,
-    "significance": {
-      "enabled": true,
-      "signals": ["ttHcc", "ttHbb"],
-      "metric": "s_over_sqrt_s_plus_b"
-    },
-    "distribution_groups": [
-      {
-        "name": "ttHcc",
-        "label": "ttHcc",
-        "truth_categories": ["ttHcc"],
-        "color": "orangered"
-      },
-      {
-        "name": "tt_light",
-        "label": "tt+light",
-        "truth_categories": ["ttLF"],
-        "color": "royalblue"
-      },
-      {
-        "name": "tt_ge1c",
-        "label": "tt+>=1c",
-        "truth_categories": ["ttcj", "ttcc", "tt2c"],
-        "color": "deepskyblue"
-      },
-      {
-        "name": "tt_ge1b",
-        "label": "tt+>=1b",
-        "truth_categories": ["ttbj", "ttbb", "tt2b"],
-        "color": "forestgreen"
-      },
-      {
-        "name": "qcd",
-        "label": "QCD",
-        "truth_categories": ["qcd"],
-        "color": "black"
-      }
-    ],
-    "groups": [
-      {
-        "name": "ttHcc",
-        "label": "ttHcc",
-        "truth_categories": ["ttHcc"],
-        "color": "orangered"
-      },
-      {
-        "name": "qcd",
-        "label": "QCD",
-        "truth_categories": ["qcd"],
-        "color": "black"
-      },
-      {
-        "name": "ttX",
-        "label": "tt+X",
-        "truth_categories": ["ttLF", "ttcj", "ttcc", "tt2c", "ttbj", "ttbb", "tt2b"],
-        "color": "tab:blue"
-      },
-      {
-        "name": "all_non_qcd_background",
-        "label": "All non-QCD background",
-        "truth_categories": ["ttHbb", "ttZcc", "ttZbb", "ttZqq", "ttLF", "ttcj", "ttcc", "tt2c", "ttbj", "ttbb", "tt2b"],
-        "color": "gray"
-      }
+      "ttcj", "ttcc", "tt2c", "ttbj", "ttbb", "tt2b"
     ]
   },
   "score_significance": {
@@ -240,11 +162,6 @@
         "score": "score_ttLF",
         "direction": "<",
         "thresholds": [0.01, 0.02, 0.05, 0.1]
-      },
-      {
-        "score": "score_qcd",
-        "direction": "<",
-        "thresholds": [0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, 0.1]
       }
     ]
   },
@@ -260,8 +177,7 @@
     {"name": "tt2c", "label": "tt2c", "branch": "score_tt2c", "color": "#4575B4"},
     {"name": "ttbj", "label": "ttbj", "branch": "score_ttbj", "color": "#313695"},
     {"name": "ttbb", "label": "ttbb", "branch": "score_ttbb", "color": "darkgreen"},
-    {"name": "tt2b", "label": "tt2b", "branch": "score_tt2b", "color": "forestgreen"},
-    {"name": "qcd", "label": "qcd", "branch": "score_qcd", "color": "lime"}
+    {"name": "tt2b", "label": "tt2b", "branch": "score_tt2b", "color": "forestgreen"}
   ],
   "auxiliary_scores": [
     {"name": "ttH", "label": "ttH", "branch": "score_ttH"},
@@ -283,8 +199,7 @@
     {"name": "tt2c", "label": "tt2c", "expression": "(n_gentop == 2) & (tt_hf_flavor == 4) & (tt_hf_count == 2) & (higgs_decay == 0) & (z_decay == 0)", "color": "#4575B4"},
     {"name": "ttbj", "label": "ttbj", "expression": "(n_gentop == 2) & (tt_hf_flavor == 5) & (tt_hf_count <= 1) & (higgs_decay == 0) & (z_decay == 0)", "color": "#313695"},
     {"name": "ttbb", "label": "ttbb", "expression": "(n_gentop == 2) & (tt_hf_flavor == 5) & (tt_hf_count > 2) & (higgs_decay == 0) & (z_decay == 0)", "color": "darkgreen"},
-    {"name": "tt2b", "label": "tt2b", "expression": "(n_gentop == 2) & (tt_hf_flavor == 5) & (tt_hf_count == 2) & (higgs_decay == 0) & (z_decay == 0)", "color": "forestgreen"},
-    {"name": "qcd", "label": "qcd", "expression": "n_gentop == 0", "color": "lime"}
+    {"name": "tt2b", "label": "tt2b", "expression": "(n_gentop == 2) & (tt_hf_flavor == 5) & (tt_hf_count == 2) & (higgs_decay == 0) & (z_decay == 0)", "color": "forestgreen"}
   ],
   "samples": [
     {"name": "ttH-Hto2C_M-125_TTTo2L2Nu_TuneCP5_13p6TeV-powheg-pythia8", "label": "ttHcc"},
@@ -306,30 +221,6 @@
     {"name": "TTBBto4Q_TuneCP5_13p6TeV_powheg-pythia8", "label": "tt+b", "selection": "tt_hf_flavor == 5"},
     {"name": "TTtoLNu2Q-BBDPS_TuneCP5_13p6TeV_powheg-pythia8", "label": "tt+b DPS", "selection": "tt_hf_flavor == 5"},
     {"name": "TTto2L2Nu-BBDPS_TuneCP5_13p6TeV_powheg-pythia8", "label": "tt+b DPS", "selection": "tt_hf_flavor == 5"},
-    {"name": "TTto4Q-BBDPS_TuneCP5_13p6TeV_powheg-pythia8", "label": "tt+b DPS", "selection": "tt_hf_flavor == 5"},
-
-    {"name": "QCD-4Jets_Bin-HT-40to70_TuneCP5_13p6TeV_madgraphMLM-pythia8", "label": "QCD"},
-    {"name": "QCD-4Jets_Bin-HT-70to100_TuneCP5_13p6TeV_madgraphMLM-pythia8", "label": "QCD"},
-    {"name": "QCD-4Jets_Bin-HT-100to200_TuneCP5_13p6TeV_madgraphMLM-pythia8", "label": "QCD"},
-    {"name": "QCD-4Jets_Bin-HT-200to400_TuneCP5_13p6TeV_madgraphMLM-pythia8", "label": "QCD"},
-    {"name": "QCD-4Jets_Bin-HT-400to600_TuneCP5_13p6TeV_madgraphMLM-pythia8", "label": "QCD"},
-    {"name": "QCD-4Jets_Bin-HT-600to800_TuneCP5_13p6TeV_madgraphMLM-pythia8", "label": "QCD"},
-    {"name": "QCD-4Jets_Bin-HT-800to1000_TuneCP5_13p6TeV_madgraphMLM-pythia8", "label": "QCD"},
-    {"name": "QCD-4Jets_Bin-HT-1000to1200_TuneCP5_13p6TeV_madgraphMLM-pythia8", "label": "QCD"},
-    {"name": "QCD-4Jets_Bin-HT-1200to1500_TuneCP5_13p6TeV_madgraphMLM-pythia8", "label": "QCD"},
-    {"name": "QCD-4Jets_Bin-HT-1500to2000_TuneCP5_13p6TeV_madgraphMLM-pythia8", "label": "QCD"},
-    {"name": "QCD-4Jets_Bin-HT-2000_TuneCP5_13p6TeV_madgraphMLM-pythia8", "label": "QCD"},
-
-    {"name": "Wto2Q-3Jets_Bin-HT-100to400_TuneCP5_13p6TeV_madgraphMLM-pythia8", "label": "Wto2Q"},
-    {"name": "Wto2Q-3Jets_Bin-HT-400to800_TuneCP5_13p6TeV_madgraphMLM-pythia8", "label": "Wto2Q"},
-    {"name": "Wto2Q-3Jets_Bin-HT-800to1500_TuneCP5_13p6TeV_madgraphMLM-pythia8", "label": "Wto2Q"},
-    {"name": "Wto2Q-3Jets_Bin-HT-1500to2500_TuneCP5_13p6TeV_madgraphMLM-pythia8", "label": "Wto2Q"},
-    {"name": "Wto2Q-3Jets_Bin-HT-2500_TuneCP5_13p6TeV_madgraphMLM-pythia8", "label": "Wto2Q"},
-
-    {"name": "Zto2Q-4Jets_Bin-HT-100to400_TuneCP5_13p6TeV_madgraphMLM-pythia8", "label": "Zto2Q"},
-    {"name": "Zto2Q-4Jets_Bin-HT-400to800_TuneCP5_13p6TeV_madgraphMLM-pythia8", "label": "Zto2Q"},
-    {"name": "Zto2Q-4Jets_Bin-HT-800to1500_TuneCP5_13p6TeV_madgraphMLM-pythia8", "label": "Zto2Q"},
-    {"name": "Zto2Q-4Jets_Bin-HT-1500to2500_TuneCP5_13p6TeV_madgraphMLM-pythia8", "label": "Zto2Q"},
-    {"name": "Zto2Q-4Jets_Bin-HT-2500_TuneCP5_13p6TeV_madgraphMLM-pythia8", "label": "Zto2Q"}
+    {"name": "TTto4Q-BBDPS_TuneCP5_13p6TeV_powheg-pythia8", "label": "tt+b DPS", "selection": "tt_hf_flavor == 5"}
   ]
 }

@@ -15,8 +15,12 @@ from tthcc_an.nn_study.plotting import (
     plot_qcd_score_distribution,
     plot_qcd_to_ttx_ratio,
     plot_qcd_working_point_distribution,
+    plot_score_significance,
 )
 from tthcc_an.nn_study.reporting import write_json, write_text
+from tthcc_an.nn_study.score_significance import (
+    calculate_score_significance_scan,
+)
 
 
 def _group_mask(
@@ -119,6 +123,41 @@ def _format_summary(payload: dict[str, Any]) -> str:
             f"{row['ttHcc_event_count_after_cut']:<9d} "
             f"{row['qcd_event_count_after_cut']:<7d}"
         )
+    score_significance = payload["scan"].get(
+        "score_significance_s_over_sqrt_s_plus_b"
+    )
+    if score_significance is not None:
+        lines.extend(
+            [
+                "",
+                "Score significance (scan maximum; not a final working point):",
+                "  Z = S / sqrt(S + B)",
+                "  Signal = one target truth category",
+                "  Background = every other selected MC event",
+                "  Additional mass window: no",
+            ]
+        )
+        for signal_name, result in score_significance["signals"].items():
+            lines.append(
+                f"  {signal_name}: baseline Z={result['baseline_significance']:.9g}; "
+                f"best cut={result['best_threshold']:.9g}, "
+                f"max Z={result['best_significance']:.9g}"
+            )
+        lines.extend(
+            [
+                "",
+                "Candidate score significance:",
+                "cut         signal   S              B              Z",
+            ]
+        )
+        for row in payload["candidate_working_points"]:
+            for signal_name, point in row["s_over_sqrt_s_plus_b"].items():
+                lines.append(
+                    f"{row['cut']:<11.5g} {signal_name:<8s} "
+                    f"{point['signal_weighted_yield']:<14.7g} "
+                    f"{point['background_weighted_yield']:<14.7g} "
+                    f"{point['significance']:<14.7g}"
+                )
     validation = payload["validation"]
     lines.extend(
         [
@@ -233,6 +272,35 @@ def run_qcd_score_scan(
         for value in significance_qcd_ttx
     ]
 
+    score_significance: dict[str, Any] | None = None
+    if settings.significance_enabled:
+        score_significance = calculate_score_significance_scan(
+            score=score,
+            weights=weights,
+            truth_index=dataset.truth_index,
+            truth_names=config.truth_names,
+            signals=settings.significance_signals,
+            thresholds=thresholds,
+            direction=settings.direction,
+        )
+        score_significance.update(
+            {
+                "score_name": settings.score_name,
+                "score_branch": settings.score_branch,
+                "scan_min": settings.scan_min,
+                "scan_max": settings.scan_max,
+                "configured_log_points": settings.scan_points,
+                "candidate_thresholds": settings.candidate_thresholds,
+            }
+        )
+        for signal_name, result in score_significance["signals"].items():
+            score_significance[f"{signal_name}_best_cut"] = result[
+                "best_threshold"
+            ]
+            score_significance[f"{signal_name}_best_significance"] = result[
+                "best_significance"
+            ]
+
     candidate_rows: list[dict[str, Any]] = []
     candidate_indices: list[int] = []
     for cut in settings.candidate_thresholds:
@@ -243,8 +311,7 @@ def run_qcd_score_scan(
         candidate_indices.append(index)
         tthcc_eff = group_results["ttHcc"]["weighted_efficiency"][index]
         qcd_eff = group_results["qcd"]["weighted_efficiency"][index]
-        candidate_rows.append(
-            {
+        row: dict[str, Any] = {
                 "cut": cut,
                 "ttHcc_weighted_yield_before_cut": group_results["ttHcc"]["weighted_yield_before_cut"],
                 "ttHcc_weighted_yield_after_cut": tthcc_yields[index],
@@ -262,7 +329,14 @@ def run_qcd_score_scan(
                 "relative_significance_qcd": relative_qcd[index],
                 "relative_significance_qcd_plus_ttX": relative_qcd_ttx[index],
             }
-        )
+        if score_significance is not None:
+            row["s_over_sqrt_s_plus_b"] = {
+                signal_name: score_significance["signals"][signal_name]["points"][
+                    index
+                ]
+                for signal_name in settings.significance_signals
+            }
+        candidate_rows.append(row)
 
     log_bins = np.linspace(
         settings.distribution_log10_range[0],
@@ -310,6 +384,10 @@ def run_qcd_score_scan(
         "working_point_distribution": qcd_plot_dir / f"qcd_score_distribution{plot_suffix}",
         "working_point_distribution_yield": qcd_plot_dir / f"qcd_score_distribution__yield{plot_suffix}",
     }
+    if score_significance is not None:
+        plot_paths["significance_s_over_sqrt_s_plus_b"] = qcd_plot_dir / (
+            f"qcd_cut_scan__significance_s_over_sqrt_s_plus_b{plot_suffix}"
+        )
     plot_qcd_score_distribution(
         outpath=plot_paths["score_distribution"],
         bins=log_bins,
@@ -348,6 +426,26 @@ def run_qcd_score_scan(
         qcd_only=_as_plot_array(relative_qcd),
         qcd_plus_ttx=_as_plot_array(relative_qcd_ttx),
     )
+    if score_significance is not None:
+        truths_by_name = {
+            truth.name: truth for truth in config.truth_categories
+        }
+        plot_score_significance(
+            outpath=plot_paths["significance_s_over_sqrt_s_plus_b"],
+            thresholds=thresholds,
+            signal_results=score_significance["signals"],
+            signal_styles={
+                name: {
+                    "label": truths_by_name[name].label,
+                    "color": truths_by_name[name].color,
+                }
+                for name in settings.significance_signals
+            },
+            score_branch=settings.score_branch,
+            direction=settings.direction,
+            xscale="log",
+            candidate_thresholds=settings.candidate_thresholds,
+        )
     plot_qcd_working_point_distribution(
         outpath=plot_paths["working_point_distribution"],
         bins=working_point_bins,
@@ -469,6 +567,7 @@ def run_qcd_score_scan(
                 "relative_qcd": relative_qcd,
                 "relative_qcd_plus_ttX": relative_qcd_ttx,
             },
+            "score_significance_s_over_sqrt_s_plus_b": score_significance,
         },
         "candidate_working_points": candidate_rows,
         "validation": {
@@ -481,6 +580,11 @@ def run_qcd_score_scan(
             ),
             "working_point_histograms_normalized": normalized_shapes_valid,
             "working_point_rejected_side_is_high_score": True,
+            "score_significance": (
+                None
+                if score_significance is None
+                else score_significance["validation"]
+            ),
             "no_nonfinite_serialized_metrics": True,
         },
         "plots": {name: str(path) for name, path in plot_paths.items()},

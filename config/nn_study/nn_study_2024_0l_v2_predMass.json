@@ -1,16 +1,16 @@
 {
   "normalization": {
-    "gen_sumw_file": "/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_0L_v1_pred_RealMass/gen_sumws.json",
+    "gen_sumw_file": "/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_0L_v2/gen_sumws.json",
     "xsec_file": "/eos/user/h/hanw/ttHcc/tthcc_an/crosssections_run3.json",
     "lumi_fb": 109.08
   },
   "study": {
-    "channel": "2024 boosted 0L",
+    "channel": "2024 boosted 0L NN v2 (real-mass training)",
     "year": "2024",
     "energy_tev": 13.6,
-    "input_location": "/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_0L_v1_pred_RealMass_events",
+    "input_location": "/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_0L_v2_event",
     "sample_file_pattern": "{input_location}/{name}/*.root",
-    "outdir": "outputs/nn_study_2024_0l_v1_predMass",
+    "outdir": "outputs/nn_study_2024_0l_v2_predMass",
     "tree_name": "Events",
     "weight_branch": "weight",
     "selection": "",

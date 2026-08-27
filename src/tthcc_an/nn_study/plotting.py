@@ -434,6 +434,81 @@ def plot_qcd_relative_significance(
     _save(fig, outpath)
 
 
+def plot_score_significance(
+    *,
+    outpath: Path,
+    thresholds: np.ndarray,
+    signal_results: dict[str, dict[str, object]],
+    signal_styles: dict[str, dict[str, str | None]],
+    score_branch: str,
+    direction: str,
+    xscale: str,
+    candidate_thresholds: list[float] | None = None,
+) -> None:
+    _setup_style()
+    fig, ax = plt.subplots(dpi=150, figsize=(7.4, 5.4))
+    fallback_colors = plt.get_cmap("tab10").colors
+    for index, (signal_name, result) in enumerate(signal_results.items()):
+        points = list(result["points"])
+        significance = np.asarray(
+            [point["significance"] for point in points], dtype=np.float64
+        )
+        style = signal_styles[signal_name]
+        color = style.get("color") or fallback_colors[index % len(fallback_colors)]
+        label = str(style.get("label") or signal_name)
+        ax.plot(
+            thresholds,
+            significance,
+            color=color,
+            linewidth=2.0,
+            label=rf"{label}: $S/\sqrt{{S+B}}$",
+        )
+        best_index = int(result["best_scan_index"])
+        best_cut = float(result["best_threshold"])
+        best_significance = float(result["best_significance"])
+        ax.scatter(
+            [best_cut],
+            [best_significance],
+            color=color,
+            edgecolor="white",
+            linewidth=0.7,
+            s=42,
+            zorder=4,
+        )
+        ax.annotate(
+            f"{label}: best cut = {best_cut:.4g}\nmax Z = {best_significance:.4g}",
+            (thresholds[best_index], significance[best_index]),
+            xytext=(8, 10 - 28 * index),
+            textcoords="offset points",
+            color=color,
+            fontsize=8,
+            bbox={
+                "facecolor": "white",
+                "alpha": 0.78,
+                "edgecolor": "none",
+                "pad": 1.5,
+            },
+        )
+    for threshold in candidate_thresholds or []:
+        ax.axvline(
+            threshold,
+            color="gray",
+            linestyle=":",
+            linewidth=0.8,
+            alpha=0.38,
+            zorder=0,
+        )
+    ax.set_xscale(xscale)
+    ax.set_xlim(float(thresholds[0]), float(thresholds[-1]))
+    ax.set_ylim(bottom=0.0)
+    ax.set_xlabel(f"Cut on {score_branch}: keep {score_branch} {direction} cut")
+    ax.set_ylabel(r"Expected significance $S/\sqrt{S+B}$")
+    ax.grid(alpha=0.22, which="both")
+    ax.legend(frameon=False, ncol=2, fontsize=8.5, loc="best")
+    hep.cms.label(data=False, ax=ax)
+    _save(fig, outpath)
+
+
 def plot_confusion_matrix(
     *,
     outpath: Path,

@@ -6,6 +6,15 @@ from typing import Any
 
 import numpy as np
 
+from tthcc_an.nn_study.cache import (
+    cache_analysis_branches,
+    cache_metadata_path,
+    cache_score_names,
+    load_nn_cache,
+    resolve_cache_path,
+    validate_nn_cache,
+    write_nn_cache,
+)
 from tthcc_an.nn_study.config import load_nn_study_config
 from tthcc_an.nn_study.dataset import NnDataset, load_nn_dataset
 from tthcc_an.nn_study.mass_sculpting import run_mass_sculpting
@@ -19,6 +28,7 @@ from tthcc_an.nn_study.plotting import (
 )
 from tthcc_an.nn_study.qcd_score_scan import run_qcd_score_scan
 from tthcc_an.nn_study.reporting import format_summary_text, write_json, write_text
+from tthcc_an.nn_study.score_significance import run_score_significance
 from tthcc_an.nn_study.weighting_diagnostics import run_weighting_diagnostics
 
 
@@ -29,6 +39,7 @@ PLOT_CHOICES = (
     "roc",
     "auc",
     "mass-sculpting",
+    "score-significance",
     "qcd-score-scan",
     "weighting-diagnostics",
 )
@@ -57,6 +68,30 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=PLOT_CHOICES,
         default=None,
         help="Optional plot groups to produce; summaries are always written.",
+    )
+    cache_mode = parser.add_mutually_exclusive_group()
+    cache_mode.add_argument(
+        "--prepare-cache",
+        action="store_true",
+        help="Read ROOT once and write the reusable event-level NN-study cache.",
+    )
+    cache_mode.add_argument(
+        "--from-cache",
+        action="store_true",
+        help="Load the prepared event-level cache without discovering or opening ROOT files.",
+    )
+    parser.add_argument(
+        "--cache-path",
+        default=None,
+        help=(
+            "Optional prepared NPZ path; defaults to "
+            "<study.outdir>/cache/prepared_events.npz."
+        ),
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite an existing cache; valid only with --prepare-cache.",
     )
     return parser
 
@@ -90,14 +125,73 @@ def _auc_validation(pairwise: dict[str, dict[str, Any]], requested: bool) -> dic
     }
 
 
-def run(args: argparse.Namespace) -> dict[str, Any]:
-    config = load_nn_study_config(
+def _load_config(
+    args: argparse.Namespace, *, discover_sample_files: bool
+) -> Any:
+    return load_nn_study_config(
         args.config,
         REPO_ROOT,
         outdir=args.outdir,
         selection=args.selection,
         max_files_per_sample=args.max_files_per_sample,
+        discover_sample_files=discover_sample_files,
     )
+
+
+def _prepare_cache(args: argparse.Namespace) -> dict[str, Any]:
+    if args.only is not None:
+        raise ValueError("--prepare-cache cannot be combined with --only.")
+    config_without_files = _load_config(args, discover_sample_files=False)
+    cache_path = resolve_cache_path(config_without_files, args.cache_path)
+    if cache_path.exists() and not args.force:
+        config_with_files = _load_config(args, discover_sample_files=True)
+        metadata = validate_nn_cache(
+            config=config_with_files,
+            cache_path=cache_path,
+            check_input_files=True,
+        )
+        return {
+            "operation": "prepare-cache",
+            "cache_reused": True,
+            "cache_path": str(cache_path),
+            "cache_metadata_path": str(cache_metadata_path(cache_path)),
+            "number_of_events_selected": metadata["number_of_selected_events"],
+            "number_of_files_discovered": metadata[
+                "number_of_input_files_discovered"
+            ],
+            "cache_size_bytes": metadata["cache_size_bytes"],
+        }
+
+    config = _load_config(args, discover_sample_files=True)
+    dataset = load_nn_dataset(
+        config,
+        score_names=cache_score_names(config),
+        analysis_branches=cache_analysis_branches(config),
+    )
+    metadata = write_nn_cache(
+        config=config,
+        dataset=dataset,
+        cache_path=cache_path,
+    )
+    return {
+        "operation": "prepare-cache",
+        "cache_reused": False,
+        "cache_path": str(cache_path),
+        "cache_metadata_path": str(cache_metadata_path(cache_path)),
+        "number_of_events_selected": metadata["number_of_selected_events"],
+        "number_of_files_discovered": metadata[
+            "number_of_input_files_discovered"
+        ],
+        "cache_size_bytes": metadata["cache_size_bytes"],
+    }
+
+
+def run(args: argparse.Namespace) -> dict[str, Any]:
+    if args.force and not args.prepare_cache:
+        raise ValueError("--force is valid only with --prepare-cache.")
+    if args.prepare_cache:
+        return _prepare_cache(args)
+    config = _load_config(args, discover_sample_files=not args.from_cache)
     config.outdir.mkdir(parents=True, exist_ok=True)
     plot_dir = config.outdir / "plots"
     plot_dir.mkdir(parents=True, exist_ok=True)
@@ -105,12 +199,19 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     plot_groups = set(args.only or ("scores", "confusion", "roc", "auc"))
     if args.only is None and config.mass_sculpting.enabled:
         plot_groups.add("mass-sculpting")
+    if args.only is None and config.score_significance.enabled:
+        plot_groups.add("score-significance")
     if args.only is None and config.qcd_score_scan.enabled:
         plot_groups.add("qcd-score-scan")
     if args.only is None and config.weighting_diagnostics.enabled:
         plot_groups.add("weighting-diagnostics")
     if "mass-sculpting" in plot_groups and not config.mass_sculpting.enabled:
         raise ValueError("mass_sculpting is not enabled in this config.")
+    if (
+        "score-significance" in plot_groups
+        and not config.score_significance.enabled
+    ):
+        raise ValueError("score_significance is not enabled in this config.")
     if "qcd-score-scan" in plot_groups and not config.qcd_score_scan.enabled:
         raise ValueError("qcd_score_scan is not enabled in this config.")
     if (
@@ -134,6 +235,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         loaded_analysis_branches.extend(
             variable.branch for variable in config.mass_sculpting.variables
         )
+    if "score-significance" in plot_groups:
+        loaded_score_names.extend(
+            scan.score_name for scan in config.score_significance.scans
+        )
     if "qcd-score-scan" in plot_groups:
         loaded_score_names.append(config.qcd_score_scan.score_name)
     if "weighting-diagnostics" in plot_groups:
@@ -144,11 +249,22 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         loaded_analysis_branches.extend(config.analysis_branches)
     loaded_score_names = list(dict.fromkeys(loaded_score_names))
     loaded_analysis_branches = list(dict.fromkeys(loaded_analysis_branches))
-    dataset = load_nn_dataset(
-        config,
-        score_names=loaded_score_names,
-        analysis_branches=loaded_analysis_branches,
-    )
+    cache_path: Path | None = None
+    cache_metadata: dict[str, Any] | None = None
+    if args.from_cache:
+        cache_path = resolve_cache_path(config, args.cache_path)
+        dataset, cache_metadata = load_nn_cache(
+            config=config,
+            cache_path=cache_path,
+            score_names=loaded_score_names,
+            analysis_branches=loaded_analysis_branches,
+        )
+    else:
+        dataset = load_nn_dataset(
+            config,
+            score_names=loaded_score_names,
+            analysis_branches=loaded_analysis_branches,
+        )
     plot_format = str(config.plot_options.get("format", "png")).lower().lstrip(".")
     if plot_format not in {"png", "pdf"}:
         raise ValueError("plot.format must be either 'png' or 'pdf'.")
@@ -239,6 +355,17 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         )
         plots.extend(mass_plots)
 
+    score_significance_summary: dict[str, Any] | None = None
+    if "score-significance" in plot_groups:
+        significance_plots, score_significance_summary = run_score_significance(
+            config=config,
+            dataset=dataset,
+            plot_dir=plot_dir,
+            summary_dir=summary_dir,
+            plot_suffix=plot_suffix,
+        )
+        plots.extend(significance_plots)
+
     qcd_score_scan_summary: dict[str, Any] | None = None
     if "qcd-score-scan" in plot_groups:
         qcd_plots, qcd_score_scan_summary = run_qcd_score_scan(
@@ -282,6 +409,18 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     summary: dict[str, Any] = {
         "channel": config.channel,
         "config": str(config.config_path),
+        "input_source": "cache" if args.from_cache else "root",
+        "cache": (
+            {
+                "path": str(cache_path),
+                "metadata_path": str(cache_metadata_path(cache_path)),
+                "schema_version": cache_metadata["cache_schema_version"],
+                "definition_hash": cache_metadata["definition_hash"],
+                "created_utc": cache_metadata["created_utc"],
+            }
+            if cache_path is not None and cache_metadata is not None
+            else None
+        ),
         "input_location": config.input_location,
         "sample_file_pattern": config.sample_file_pattern,
         "output_directory": str(config.outdir),
@@ -324,6 +463,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         ),
         "confusion_events": confusion_events,
         "mass_sculpting": mass_sculpting_summary,
+        "score_significance": score_significance_summary,
         "qcd_score_scan": qcd_score_scan_summary,
         "weighting_diagnostics": weighting_diagnostics_summary,
         "normalization": {
@@ -343,6 +483,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "mass_sculpting": (
                 "analysis-weighted; each curve independently normalized to unit density "
                 "over the plotted mass range"
+            ),
+            "score_significance": (
+                "analysis-weighted S/sqrt(S+B); one truth category is signal and "
+                "every other selected MC event is background"
             ),
             "qcd_score_scan": "analysis-weighted expected yields and weighted efficiencies",
             "weighting_diagnostics": (
@@ -370,8 +514,17 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
 def main() -> None:
     args = _build_parser().parse_args()
     summary = run(args)
+    if summary.get("operation") == "prepare-cache":
+        print("NN-study cache ready.")
+        print(f"Cache: {summary['cache_path']}")
+        print(f"Metadata: {summary['cache_metadata_path']}")
+        print(f"Reused existing cache: {summary['cache_reused']}")
+        print(f"Selected events: {summary['number_of_events_selected']}")
+        print(f"Cache size: {summary['cache_size_bytes'] / (1024 ** 2):.2f} MiB")
+        return
     print("NN study finished.")
     print(f"Output directory: {summary['output_directory']}")
+    print(f"Input source: {summary['input_source']}")
     print(f"Processed Events files: {summary['number_of_files_processed']}")
     print(f"Selected events: {summary['number_of_events_selected']}")
     print(f"Plots: {len(summary['plots'])}")

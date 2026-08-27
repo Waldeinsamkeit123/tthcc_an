@@ -847,9 +847,29 @@ The independent NN-study subsystem is:
 
 - entry point: `scripts/run_nn_study.py`
 - implementation: `src/tthcc_an/nn_study/`
-- shipping configs: `config/nn_study/nn_study_2024_{0l,1l}_v1.json`
+- v1 configs: `config/nn_study/nn_study_2024_{0l,1l}_v1.json`
+- real-mass-trained v2 configs:
+  `config/nn_study/nn_study_2024_{0l,1l}_v2_predMass.json`
+- zero-mass-trained v3 configs:
+  `config/nn_study/nn_study_2024_{0l,1l}_v3_zeroMass.json`
 - ROOT inputs: `/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_{0L,1L}_v1_pred_RealMass_events`
 - Pepper normalization outputs: `/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_{0L,1L}_v1_pred_RealMass`
+- v2 ROOT inputs: `/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_{0L,1L}_v2_event`
+- v2 normalization outputs: `/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_{0L,1L}_v2`
+- v3 ROOT inputs: `/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_{0L,1L}_v3_event`
+- v3 normalization outputs: `/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_{0L,1L}_v3`
+
+The v2 model training replaces the randomized target-fatjet mass used by v1
+with the real target-fatjet mass. The v2 configs keep the same NN-study truth,
+sample-stitching, weighting, mass-sculpting, and score-scan definitions so the
+two model versions remain directly comparable.
+
+The v3 model sets the target-fatjet mass input to zero during training. Its
+configs preserve the same analysis definitions for a direct v1/v2/v3 model
+comparison. The 0L v3 config already points to the expected
+`NNeval_0L_v3/gen_sumws.json`; that production is allowed to be incomplete, so
+the config cannot run until the normalization file and required sample outputs
+exist.
 
 The actual 1L ntuples contain 12 softmax outputs named:
 
@@ -920,6 +940,61 @@ python scripts/run_nn_study.py \
   --max-files-per-sample 1 \
   --outdir /tmp/nn_study_2024_1l_v1_smoke
 ```
+
+### Prepared NN-study cache
+
+For repeated studies, prepare one event-level cache containing every configured
+score plus the union of analysis branches required by the enabled studies:
+
+```bash
+python scripts/run_nn_study.py \
+  --config config/nn_study/nn_study_2024_0l_v2_predMass.json \
+  --prepare-cache
+```
+
+The default payload is `<study.outdir>/cache/prepared_events.npz`, with
+`prepared_events.metadata.json` beside it. The payload is an uncompressed NPZ:
+this uses more space than compressed NPZ but avoids repeated decompression CPU
+cost for interactive plotting. The metadata records the schema, stored arrays,
+sample summaries, normalization, structural definition hash, discovered input
+file list hash, event counts, and cache size.
+
+All existing modes can then run without discovering or opening ROOT files:
+
+```bash
+python scripts/run_nn_study.py \
+  --config config/nn_study/nn_study_2024_0l_v2_predMass.json \
+  --from-cache \
+  --only qcd-score-scan
+
+python scripts/run_nn_study.py \
+  --config config/nn_study/nn_study_2024_0l_v2_predMass.json \
+  --from-cache \
+  --only mass-sculpting
+
+python scripts/run_nn_study.py \
+  --config config/nn_study/nn_study_2024_0l_v2_predMass.json \
+  --from-cache
+```
+
+Use `--cache-path PATH` to share a cache with an overridden output directory.
+`--max-files-per-sample` is part of the cache definition, so it must match
+between prepare and reuse. Re-running `--prepare-cache` reuses a compatible
+payload after checking the discovered input file list; add `--force` to rebuild.
+
+Changes to the input location/pattern, tree, event or sample selection, truth or
+sample definitions, weight branch, luminosity, gen-sumw/xsec files, score branch
+mapping, or required analysis branches invalidate the cache. Plot styling,
+binning, thresholds (including `qcd_score_scan.reference_threshold`), scan-point
+choices, plot groups, and output directory do not. `--from-cache` deliberately
+does not stat or glob ROOT inputs; if a ROOT file is replaced in place under the
+same filename, rebuild explicitly with `--prepare-cache --force`.
+
+An lxplus 0L v2 smoke test with one valid file per sample selected 7,553 events
+and produced a 1.85 MiB cache. Measured wall times were 23.35 s to prepare,
+20.10 s for a direct-ROOT QCD scan versus 4.73 s from cache, and 22.05 s for a
+direct-ROOT mass study versus 5.41 s from cache. These are smoke-test timings,
+not full-production benchmarks.
 
 The workflow writes per-class and auxiliary shape/expected-yield score PNGs, row/column
 normalized confusion matrices, one pairwise ROC PNG per available signal truth
@@ -1000,6 +1075,47 @@ is produced, and no class-balanced approximation is silently substituted.
 The existing expected-yield, QCD scan, mass-sculpting, composition, and
 physics ROC/AUC products continue to use `sample_norm * abs(weight)`.
 
+### Score-cut significance scans
+
+Both channels enable config-driven significance scans for the auxiliary
+scores `score_ttX` and `score_ttLF`. The metric is strictly
+
+```text
+Z = S / sqrt(S + B)
+```
+
+For each curve, `S` is exactly one NN-study truth category (`ttHcc` or
+`ttHbb`) and `B` is every other selected MC event. Thus ttHbb is background
+for the ttHcc curve, ttHcc is background for the ttHbb curve, and all ttZ,
+ttbar, QCD, and W/Z+jets contributions are also background. The weight for
+both S and B is `sample_norm * abs(weight)`. No additional mass window is
+applied beyond the current upstream/configured NN-study event population.
+
+The configured scans are independent of the sparse mass-sculpting cuts:
+
+- `score_ttX > cut`: 201 linear points over exactly `0 <= cut <= 1`
+- `score_ttLF < cut`: 161 linear points over exactly `0 <= cut <= 0.8`
+- 0L `score_qcd < cut`: the existing 121-point log scan over `1e-6` to `1`,
+  augmented with the seven exact candidate thresholds
+
+The no-score-cut baseline uses the full selected MC population before any
+score requirement. In particular, `score_ttLF < 0.8` is not treated as the
+uncut baseline. Scan maxima are diagnostics only and are never written back as
+final working points.
+
+Run only the ttX/ttLF scans with:
+
+```bash
+python scripts/run_nn_study.py \
+  --config config/nn_study/nn_study_2024_1l_v1.json \
+  --only score-significance
+```
+
+Outputs are
+`plots/score_significance/score_tt{X,LF}__significance_s_over_sqrt_s_plus_b.png`
+and `summaries/score_significance.{json,txt}`. The summaries store every scan
+point's S, B, Z, relative significance, baseline, and numerical scan maximum.
+
 For each signal/background pair, the discriminator is
 `score_signal / (score_signal + score_background)`; a zero denominator maps
 to 0.5. The reported AUC is the standard area of signal efficiency (TPR) versus
@@ -1046,8 +1162,9 @@ Non-default populations are appended to output
 filenames, for example
 `mass_sculpting__TargetFatJet_regressed_mass_generic__score_ttX__ttHcc_sample.png`.
 Together with `variables` and `scans`, this allows later category-specific or
-0L extensions without adding a new script. This mode still reads the selected
-ROOT events because no NN-study event cache/plot-only payload exists yet.
+0L extensions without adding a new script. Direct mode reads the selected ROOT
+events; after `--prepare-cache`, use `--from-cache --only mass-sculpting` to
+avoid that repeated ROOT scan.
 
 Both configs set `study.sample_file_pattern` to
 `{input_location}/{name}/*.root`; this global template replaces per-sample
@@ -1084,6 +1201,14 @@ diagnostics include weighted score/yield curves, ttHcc and QCD efficiencies,
 QCD rejection, QCD/tt+X, a ROC-like working-point curve, and relative
 `S/sqrt(B)` for `B=QCD` and `B=QCD+tt+X`. These significance values are
 diagnostics only and do not select a working point automatically.
+
+The same QCD workflow additionally writes
+`plots/qcd_score_scan/qcd_cut_scan__significance_s_over_sqrt_s_plus_b.png`.
+It contains separate ttHcc and ttHbb `S/sqrt(S+B)` curves using the
+truth-category/everything-else definitions above, marks the seven configured
+candidate cuts, and annotates each numerical scan maximum. The existing
+QCD-scan JSON/text summary records the full curves, candidate-point S/B/Z, true
+uncut baselines, and best-point metadata.
 
 The additional `qcd_score_distribution.png` compares independently normalized
 weighted shapes for `ttHcc`, `tt+light`, `tt+>=1c`, `tt+>=1b`, and QCD using

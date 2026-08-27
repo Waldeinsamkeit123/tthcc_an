@@ -87,6 +87,27 @@
       "ttcj", "ttcc", "tt2c", "ttbj", "ttbb", "tt2b"
     ]
   },
+  "score_significance": {
+    "enabled": true,
+    "signals": ["ttHcc", "ttHbb"],
+    "metric": "s_over_sqrt_s_plus_b",
+    "scans": [
+      {
+        "score": "score_ttX",
+        "direction": ">",
+        "min": 0.0,
+        "max": 1.0,
+        "points": 201
+      },
+      {
+        "score": "score_ttLF",
+        "direction": "<",
+        "min": 0.0,
+        "max": 0.8,
+        "points": 161
+      }
+    ]
+  },
   "mass_sculpting": {
     "enabled": true,
     "populations": [

@@ -476,10 +476,35 @@ event-BDT 原型目前有四个模式：
 `score_ttjets`。0L 额外把 `score_qcd` 作为正式分类输出，truth 为
 `n_gentop == 0`。
 
-`--only scores confusion roc auc mass-sculpting qcd-score-scan` 可限制绘图组，但 summary 总会写出。
+`--only scores confusion roc auc mass-sculpting score-significance qcd-score-scan weighting-diagnostics`
+可限制绘图组，但 summary 总会写出。
 `--only mass-sculpting` 会按需只读配置中的 scan score、mass、truth/stitching
-和 weight branches，并跳过 score/confusion/ROC/AUC 计算。当前没有
-cache/plot-only 或 Condor 支持，因此 mass-only 仍需扫描 ROOT events。
+和 weight branches，并跳过 score/confusion/ROC/AUC 计算。直接模式仍需扫描
+ROOT events；需要反复研究时先准备一次 event-level cache：
+
+```bash
+python scripts/run_nn_study.py \
+  --config config/nn_study/nn_study_2024_0l_v2_predMass.json \
+  --prepare-cache
+
+python scripts/run_nn_study.py \
+  --config config/nn_study/nn_study_2024_0l_v2_predMass.json \
+  --from-cache \
+  --only mass-sculpting
+```
+
+默认缓存是 `<study.outdir>/cache/prepared_events.npz` 和相邻的
+`prepared_events.metadata.json`。`--from-cache` 不允许 glob 或打开原始 ROOT；
+所有 `--only` 模式和完整运行都必须能复用同一个缓存。可用 `--cache-path`
+覆盖位置，重建用 `--prepare-cache --force`。未压缩 NPZ 是有意选择，用磁盘
+空间换重复读取速度。
+
+cache structural definition 包括 input location/pattern、tree、selection、truth/sample
+定义、weight/normalization、score branch mapping、所需 analysis branches 和
+`max_files_per_sample`。这些变化必须重建；plot style、binning、scan thresholds、
+`reference_threshold`、绘图组和 outdir 变化不能使缓存失效。再次运行
+`--prepare-cache` 会发现并比较文件列表但不打开 ROOT 后再决定复用；
+`--from-cache` 不检查 ROOT。若同名 ROOT 在原地被替换，必须显式 `--force`。
 `--only qcd-score-scan` 只读 `score_qcd`、truth/stitching 和 weight 所需分支，
 跳过普通 score、confusion、ROC/AUC 和 mass-sculpting。
 
@@ -527,6 +552,16 @@ NN study 额外约定：
   `/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_{0L,1L}_v1_pred_RealMass_events`
 - normalization metadata 是
   `/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_{0L,1L}_v1_pred_RealMass/gen_sumws.json`
+- real-mass-trained v2 config 是
+  `config/nn_study/nn_study_2024_{0l,1l}_v2_predMass.json`，input 使用
+  `/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_{0L,1L}_v2_event`，metadata 使用
+  `/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_{0L,1L}_v2/gen_sumws.json`
+- zero-mass-trained v3 config 是
+  `config/nn_study/nn_study_2024_{0l,1l}_v3_zeroMass.json`，input 使用
+  `/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_{0L,1L}_v3_event`，metadata 使用
+  `/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_{0L,1L}_v3/gen_sumws.json`；
+  v3 训练时将 target-fatjet mass input 固定为 0。0L v3 production 当前允许未完成，
+  即使 `gen_sumws.json` 尚未产生也先保留预期路径，不要改用其他版本的 normalization
 - 两个 config 使用 `study.sample_file_pattern = {input_location}/{name}/*.root`；
   同目录结构的新 prediction 只需改 `input_location`、`gen_sumw_file` 和 `outdir`，
   不要恢复逐 sample 的绝对 `files` 路径
@@ -548,9 +583,22 @@ NN study 额外约定：
   `ttZ_sample`；`all_background_samples` 通过 `exclude_sample_labels` 排除这三类
 - 0L 除 `score_ttX` 和 `score_ttLF` 外，还扫描
   `score_qcd < 0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, 0.1`
+- 0L/1L 均启用 `score_significance`：严格使用
+  `Z = S/sqrt(S+B)` 和 `sample_norm * abs(weight)`；signal 是单个 truth category
+  `ttHcc` 或 `ttHbb`，background 是其余全部选中 MC，因此两个 signal 互相进入
+  对方背景；不额外施加 mass window
+- significance fine scan 与 mass-sculpting 稀疏 cut 相互独立：
+  `score_ttX > cut` 在 `[0,1]` 使用 201 点，`score_ttLF < cut` 在 `[0,0.8]`
+  使用 161 点；uncut baseline 始终来自 score cut 前的完整选中 population
+- `--only score-significance` 只生成 ttX/ttLF significance；输出为
+  `plots/score_significance/*__significance_s_over_sqrt_s_plus_b.png` 和
+  `summaries/score_significance.{json,txt}`，scan maximum 仅为诊断，不能自动回写 WP
 - 0L 另有配置驱动的 `qcd_score_scan`：实际使用 `score_qcd < cut`，候选点与
   mass-sculpting 相同，并在 `1e-6` 到 `1` 做 fine log scan；不要加入旧脚本的
   `nJet > 5`
+- `qcd-score-scan` 复用同一 generic significance 计算，在原有输出之外写
+  `qcd_cut_scan__significance_s_over_sqrt_s_plus_b.png`；summary 必须保留两个
+  signal 的逐点 S/B/Z、七个候选点、真实 uncut baseline 和数值 scan maximum
 - QCD-score scan 的 `tt+X` 固定为
   `ttLF, ttcj, ttcc, tt2c, ttbj, ttbb, tt2b`，QCD 使用现有
   `qcd: n_gentop == 0` truth，因此包含配置样本中满足该
@@ -579,6 +627,7 @@ NN study 额外约定：
 - 用户若只是想“换样本、换默认 target、换输出目录、换 plot preset”，大概率只需要改 JSON。
 - 用户若只是想调 event-BDT 的样本、feature、preselection、reweighting 变量，也优先改 `config/event_bdt/*.json`。
 - 用户若只是想换 NN input、模型 score 分支、truth/sample composition 或 selection，优先改 `config/nn_study/*.json`。
+- NN study 只改绘图、binning 或 cut 时，优先用 `--from-cache`；不要重复扫描 ROOT。
 - 只改绘图时，优先走 `--plot-only`，不要每次都重读 ROOT。
 - 只改 merge/Condor 逻辑时，不要碰 physics 分类代码。
 - 只改 physics 定义时，要留意 histogram payload 和 text/report 输出是否同步。
@@ -658,6 +707,23 @@ python scripts/run_nn_study.py \
   --outdir /tmp/nn_study_2024_1l_v1_smoke
 ```
 
+缓存路径至少再验证一次：
+
+```bash
+python scripts/run_nn_study.py \
+  --config config/nn_study/nn_study_2024_1l_v1.json \
+  --prepare-cache --force \
+  --max-files-per-sample 1 \
+  --outdir /tmp/nn_study_2024_1l_v1_cache_smoke
+
+python scripts/run_nn_study.py \
+  --config config/nn_study/nn_study_2024_1l_v1.json \
+  --from-cache \
+  --max-files-per-sample 1 \
+  --outdir /tmp/nn_study_2024_1l_v1_cache_smoke \
+  --only mass-sculpting
+```
+
 至少检查 summary 中：
 
 - `number_of_events_unclassified == 0`
@@ -665,6 +731,8 @@ python scripts/run_nn_study.py \
 - pairwise AUC 全在 `[0, 1]`
 - `auc_validation.max_abs_difference` 与 sklearn 一致到浮点精度
 - sample selection 没有把 inclusive `TTto*` bottom 与专用 bottom samples 重复计数
+- direct/cache 的 score histogram、confusion、AUC、yield、mass、QCD 和 significance 数值一致
+- `--from-cache` 的日志中没有 sample file discovery，且 summary 的 `input_source == "cache"`
 
 如果改动涉及 payload schema，至少验证：
 
