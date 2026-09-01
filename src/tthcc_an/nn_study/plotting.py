@@ -444,6 +444,7 @@ def plot_score_significance(
     direction: str,
     xscale: str,
     candidate_thresholds: list[float] | None = None,
+    selection_label: str | None = None,
 ) -> None:
     _setup_style()
     fig, ax = plt.subplots(dpi=150, figsize=(7.4, 5.4))
@@ -503,6 +504,22 @@ def plot_score_significance(
     ax.set_ylim(bottom=0.0)
     ax.set_xlabel(f"Cut on {score_branch}: keep {score_branch} {direction} cut")
     ax.set_ylabel(r"Expected significance $S/\sqrt{S+B}$")
+    if selection_label:
+        ax.text(
+            0.98,
+            0.96,
+            selection_label,
+            transform=ax.transAxes,
+            ha="right",
+            va="top",
+            fontsize=8.5,
+            bbox={
+                "facecolor": "white",
+                "alpha": 0.78,
+                "edgecolor": "none",
+                "pad": 1.5,
+            },
+        )
     ax.grid(alpha=0.22, which="both")
     ax.legend(frameon=False, ncol=2, fontsize=8.5, loc="best")
     hep.cms.label(data=False, ax=ax)

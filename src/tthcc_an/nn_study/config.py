@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 from dataclasses import dataclass
+from math import isfinite
 from pathlib import Path
 from typing import Any
 
@@ -94,6 +95,14 @@ class NnScoreSignificanceConfig:
 
 
 @dataclass(frozen=True)
+class NnSignificanceMassWindowConfig:
+    enabled: bool
+    branch: str | None
+    minimum: float | None
+    maximum: float | None
+
+
+@dataclass(frozen=True)
 class NnQcdScoreGroup:
     name: str
     label: str
@@ -160,6 +169,7 @@ class NnStudyConfig:
     plot_options: dict[str, Any]
     mass_sculpting: NnMassSculptingConfig
     score_significance: NnScoreSignificanceConfig
+    significance_mass_window: NnSignificanceMassWindowConfig
     qcd_score_scan: NnQcdScoreScanConfig
     weighting_diagnostics: NnWeightingDiagnosticsConfig
     validate_auc_with_sklearn: bool
@@ -474,6 +484,41 @@ def _load_score_significance(
         signals=signals,
         metric=metric,
         scans=scans,
+    )
+
+
+def _load_significance_mass_window(
+    payload: dict[str, Any],
+) -> NnSignificanceMassWindowConfig:
+    window_payload = dict(payload.get("significance_mass_window", {}))
+    enabled = bool(window_payload.get("enabled", False))
+    branch_value = window_payload.get("branch")
+    branch = None if branch_value is None else str(branch_value)
+    raw_range = [float(value) for value in list(window_payload.get("range", []))]
+    if enabled and not branch:
+        raise ValueError(
+            "Enabled significance_mass_window requires a non-empty branch."
+        )
+    if enabled and (
+        len(raw_range) != 2
+        or not all(isfinite(value) for value in raw_range)
+        or raw_range[0] >= raw_range[1]
+    ):
+        raise ValueError(
+            "Enabled significance_mass_window.range must contain two ascending values."
+        )
+    if not enabled:
+        return NnSignificanceMassWindowConfig(
+            enabled=False,
+            branch=None,
+            minimum=None,
+            maximum=None,
+        )
+    return NnSignificanceMassWindowConfig(
+        enabled=True,
+        branch=branch,
+        minimum=raw_range[0],
+        maximum=raw_range[1],
     )
 
 
@@ -843,6 +888,7 @@ def load_nn_study_config(
     _unique_names([sample.name for sample in samples], "sample")
     mass_sculpting = _load_mass_sculpting(payload, all_scores, truths, samples)
     score_significance = _load_score_significance(payload, all_scores, truths)
+    significance_mass_window = _load_significance_mass_window(payload)
     qcd_score_scan = _load_qcd_score_scan(payload, all_scores, truths)
     weighting_diagnostics = _load_weighting_diagnostics(payload, scores)
 
@@ -887,6 +933,7 @@ def load_nn_study_config(
         plot_options=dict(payload.get("plot", {})),
         mass_sculpting=mass_sculpting,
         score_significance=score_significance,
+        significance_mass_window=significance_mass_window,
         qcd_score_scan=qcd_score_scan,
         weighting_diagnostics=weighting_diagnostics,
         validate_auc_with_sklearn=bool(study.get("validate_auc_with_sklearn", True)),

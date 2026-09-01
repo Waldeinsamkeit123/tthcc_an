@@ -19,7 +19,10 @@ from tthcc_an.nn_study.plotting import (
 )
 from tthcc_an.nn_study.reporting import write_json, write_text
 from tthcc_an.nn_study.score_significance import (
+    build_significance_mass_window_selection,
     calculate_score_significance_scan,
+    mark_mass_window_result,
+    mass_window_suffix,
 )
 
 
@@ -158,6 +161,44 @@ def _format_summary(payload: dict[str, Any]) -> str:
                     f"{point['background_weighted_yield']:<14.7g} "
                     f"{point['significance']:<14.7g}"
                 )
+    mass_window_significance = payload["scan"].get(
+        "score_significance_s_over_sqrt_s_plus_b_mass_window"
+    )
+    if mass_window_significance is not None:
+        mass_window = mass_window_significance["mass_window"]
+        lines.extend(
+            [
+                "",
+                "Mass-window score significance (scan maximum; not a final working point):",
+                f"  Selection: {mass_window['boundary_semantics']}",
+                "  Z = S / sqrt(S + B)",
+                "  Signal = one target truth category",
+                "  Background = every other mass-window selected MC event",
+            ]
+        )
+        for signal_name, result in mass_window_significance["signals"].items():
+            lines.append(
+                f"  {signal_name}: baseline Z={result['baseline_significance']:.9g}; "
+                f"best cut={result['best_threshold']:.9g}, "
+                f"max Z={result['best_significance']:.9g}"
+            )
+        lines.extend(
+            [
+                "",
+                "Candidate mass-window score significance:",
+                "cut         signal   S              B              Z",
+            ]
+        )
+        for row in payload["candidate_working_points"]:
+            for signal_name, point in row[
+                "s_over_sqrt_s_plus_b_mass_window"
+            ].items():
+                lines.append(
+                    f"{row['cut']:<11.5g} {signal_name:<8s} "
+                    f"{point['signal_weighted_yield']:<14.7g} "
+                    f"{point['background_weighted_yield']:<14.7g} "
+                    f"{point['significance']:<14.7g}"
+                )
     validation = payload["validation"]
     lines.extend(
         [
@@ -273,6 +314,7 @@ def run_qcd_score_scan(
     ]
 
     score_significance: dict[str, Any] | None = None
+    mass_window_score_significance: dict[str, Any] | None = None
     if settings.significance_enabled:
         score_significance = calculate_score_significance_scan(
             score=score,
@@ -300,6 +342,44 @@ def run_qcd_score_scan(
             score_significance[f"{signal_name}_best_significance"] = result[
                 "best_significance"
             ]
+        mass_window_selection = build_significance_mass_window_selection(
+            config=config,
+            dataset=dataset,
+        )
+        if mass_window_selection is not None:
+            mass_mask, mass_window_metadata = mass_window_selection
+            mass_window_score_significance = calculate_score_significance_scan(
+                score=score[mass_mask],
+                weights=weights[mass_mask],
+                truth_index=dataset.truth_index[mass_mask],
+                truth_names=config.truth_names,
+                signals=settings.significance_signals,
+                thresholds=thresholds,
+                direction=settings.direction,
+            )
+            mark_mass_window_result(
+                mass_window_score_significance,
+                mass_window_metadata,
+            )
+            mass_window_score_significance.update(
+                {
+                    "score_name": settings.score_name,
+                    "score_branch": settings.score_branch,
+                    "scan_min": settings.scan_min,
+                    "scan_max": settings.scan_max,
+                    "configured_log_points": settings.scan_points,
+                    "candidate_thresholds": settings.candidate_thresholds,
+                }
+            )
+            for signal_name, result in mass_window_score_significance[
+                "signals"
+            ].items():
+                mass_window_score_significance[
+                    f"{signal_name}_best_cut"
+                ] = result["best_threshold"]
+                mass_window_score_significance[
+                    f"{signal_name}_best_significance"
+                ] = result["best_significance"]
 
     candidate_rows: list[dict[str, Any]] = []
     candidate_indices: list[int] = []
@@ -334,6 +414,13 @@ def run_qcd_score_scan(
                 signal_name: score_significance["signals"][signal_name]["points"][
                     index
                 ]
+                for signal_name in settings.significance_signals
+            }
+        if mass_window_score_significance is not None:
+            row["s_over_sqrt_s_plus_b_mass_window"] = {
+                signal_name: mass_window_score_significance["signals"][
+                    signal_name
+                ]["points"][index]
                 for signal_name in settings.significance_signals
             }
         candidate_rows.append(row)
@@ -387,6 +474,14 @@ def run_qcd_score_scan(
     if score_significance is not None:
         plot_paths["significance_s_over_sqrt_s_plus_b"] = qcd_plot_dir / (
             f"qcd_cut_scan__significance_s_over_sqrt_s_plus_b{plot_suffix}"
+        )
+    if mass_window_score_significance is not None:
+        plot_paths[
+            "significance_s_over_sqrt_s_plus_b_mass_window"
+        ] = qcd_plot_dir / (
+            "qcd_cut_scan__significance_s_over_sqrt_s_plus_b__"
+            f"{mass_window_suffix(mass_window_score_significance['mass_window'])}"
+            f"{plot_suffix}"
         )
     plot_qcd_score_distribution(
         outpath=plot_paths["score_distribution"],
@@ -446,6 +541,31 @@ def run_qcd_score_scan(
             xscale="log",
             candidate_thresholds=settings.candidate_thresholds,
         )
+    if mass_window_score_significance is not None:
+        truths_by_name = {
+            truth.name: truth for truth in config.truth_categories
+        }
+        plot_score_significance(
+            outpath=plot_paths[
+                "significance_s_over_sqrt_s_plus_b_mass_window"
+            ],
+            thresholds=thresholds,
+            signal_results=mass_window_score_significance["signals"],
+            signal_styles={
+                name: {
+                    "label": truths_by_name[name].label,
+                    "color": truths_by_name[name].color,
+                }
+                for name in settings.significance_signals
+            },
+            score_branch=settings.score_branch,
+            direction=settings.direction,
+            xscale="log",
+            candidate_thresholds=settings.candidate_thresholds,
+            selection_label=mass_window_score_significance["mass_window"][
+                "boundary_semantics"
+            ],
+        )
     plot_qcd_working_point_distribution(
         outpath=plot_paths["working_point_distribution"],
         bins=working_point_bins,
@@ -499,6 +619,11 @@ def run_qcd_score_scan(
             "and finite non-negative analysis weight."
         ),
         "weighting": "sample_norm * abs(raw event weight)",
+        "significance_mass_window": (
+            None
+            if mass_window_score_significance is None
+            else mass_window_score_significance["mass_window"]
+        ),
         "data_comparison": {
             "included": False,
             "reason": "Data normalization and trigger compatibility are not configured; this expected-yield scan is MC-only.",
@@ -568,6 +693,9 @@ def run_qcd_score_scan(
                 "relative_qcd_plus_ttX": relative_qcd_ttx,
             },
             "score_significance_s_over_sqrt_s_plus_b": score_significance,
+            "score_significance_s_over_sqrt_s_plus_b_mass_window": (
+                mass_window_score_significance
+            ),
         },
         "candidate_working_points": candidate_rows,
         "validation": {
@@ -584,6 +712,11 @@ def run_qcd_score_scan(
                 None
                 if score_significance is None
                 else score_significance["validation"]
+            ),
+            "score_significance_mass_window": (
+                None
+                if mass_window_score_significance is None
+                else mass_window_score_significance["validation"]
             ),
             "no_nonfinite_serialized_metrics": True,
         },

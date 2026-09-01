@@ -38,6 +38,11 @@ def cache_analysis_branches(config: NnStudyConfig) -> list[str]:
         )
     if config.weighting_diagnostics.enabled:
         branches.extend(config.weighting_diagnostics.reweight_variables)
+    if (
+        config.significance_mass_window.enabled
+        and config.significance_mass_window.branch is not None
+    ):
+        branches.append(config.significance_mass_window.branch)
     return list(dict.fromkeys(branches))
 
 

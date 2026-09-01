@@ -241,6 +241,14 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         )
     if "qcd-score-scan" in plot_groups:
         loaded_score_names.append(config.qcd_score_scan.score_name)
+    if (
+        config.significance_mass_window.enabled
+        and plot_groups & {"score-significance", "qcd-score-scan"}
+        and config.significance_mass_window.branch is not None
+    ):
+        loaded_analysis_branches.append(
+            config.significance_mass_window.branch
+        )
     if "weighting-diagnostics" in plot_groups:
         loaded_analysis_branches.extend(
             config.weighting_diagnostics.reweight_variables
@@ -486,7 +494,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             ),
             "score_significance": (
                 "analysis-weighted S/sqrt(S+B); one truth category is signal and "
-                "every other selected MC event is background"
+                "every other selected MC event is background; both inclusive and "
+                "configured mass-window scans are retained"
             ),
             "qcd_score_scan": "analysis-weighted expected yields and weighted efficiencies",
             "weighting_diagnostics": (

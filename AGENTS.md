@@ -586,19 +586,27 @@ NN study 额外约定：
 - 0L/1L 均启用 `score_significance`：严格使用
   `Z = S/sqrt(S+B)` 和 `sample_norm * abs(weight)`；signal 是单个 truth category
   `ttHcc` 或 `ttHbb`，background 是其余全部选中 MC，因此两个 signal 互相进入
-  对方背景；不额外施加 mass window
+  对方背景；原 inclusive scan 必须保留
+- v1/v2/v3 的 0L/1L config 均通过共享 `significance_mass_window` 额外扫描
+  `100 <= TargetFatJet_regressed_mass_generic <= 150 GeV`，上下边界都包含；窗口内
+  baseline 是 mass cut 后、score cut 前的完整 population，不得复用 inclusive baseline
 - significance fine scan 与 mass-sculpting 稀疏 cut 相互独立：
   `score_ttX > cut` 在 `[0,1]` 使用 201 点，`score_ttLF < cut` 在 `[0,0.8]`
   使用 161 点；uncut baseline 始终来自 score cut 前的完整选中 population
 - `--only score-significance` 只生成 ttX/ttLF significance；输出为
   `plots/score_significance/*__significance_s_over_sqrt_s_plus_b.png` 和
-  `summaries/score_significance.{json,txt}`，scan maximum 仅为诊断，不能自动回写 WP
+  对应 `*__mass_window_100_150.png`，summary 的 inclusive `scans` 与
+  `mass_window_scans` 必须分开；scan maximum 仅为诊断，不能自动回写 WP
 - 0L 另有配置驱动的 `qcd_score_scan`：实际使用 `score_qcd < cut`，候选点与
   mass-sculpting 相同，并在 `1e-6` 到 `1` 做 fine log scan；不要加入旧脚本的
   `nJet > 5`
 - `qcd-score-scan` 复用同一 generic significance 计算，在原有输出之外写
   `qcd_cut_scan__significance_s_over_sqrt_s_plus_b.png`；summary 必须保留两个
   signal 的逐点 S/B/Z、七个候选点、真实 uncut baseline 和数值 scan maximum
+- 0L QCD 还必须写
+  `qcd_cut_scan__significance_s_over_sqrt_s_plus_b__mass_window_100_150.png`；
+  mass-window QCD summary 使用相同 121 点 log grid 和七个 exact candidate cuts，
+  但 baseline、S 和 B 全部只来自窗口内事件
 - QCD-score scan 的 `tt+X` 固定为
   `ttLF, ttcj, ttcc, tt2c, ttbj, ttbb, tt2b`，QCD 使用现有
   `qcd: n_gentop == 0` truth，因此包含配置样本中满足该

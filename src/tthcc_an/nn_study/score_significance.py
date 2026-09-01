@@ -279,32 +279,117 @@ def calculate_score_significance_scan(
     }
 
 
+def build_significance_mass_window_selection(
+    *,
+    config: NnStudyConfig,
+    dataset: NnDataset,
+) -> tuple[np.ndarray, dict[str, Any]] | None:
+    settings = config.significance_mass_window
+    if not settings.enabled:
+        return None
+    if (
+        settings.branch is None
+        or settings.minimum is None
+        or settings.maximum is None
+    ):
+        raise ValueError("Enabled significance mass window is incomplete.")
+    if settings.branch not in dataset.analysis_columns:
+        raise ValueError(
+            f"Significance mass-window branch '{settings.branch}' was not loaded."
+        )
+    mass = np.asarray(dataset.analysis_columns[settings.branch], dtype=np.float64)
+    if mass.shape != dataset.truth_index.shape:
+        raise ValueError(
+            "Significance mass branch and event arrays must have identical shapes."
+        )
+    finite = np.isfinite(mass)
+    selected = finite & (mass >= settings.minimum) & (mass <= settings.maximum)
+    metadata = {
+        "enabled": True,
+        "branch": settings.branch,
+        "range": [settings.minimum, settings.maximum],
+        "boundary_semantics": (
+            f"{settings.minimum:g} <= {settings.branch} <= {settings.maximum:g}"
+        ),
+        "lower_bound_inclusive": True,
+        "upper_bound_inclusive": True,
+        "total_event_count": int(mass.size),
+        "finite_mass_event_count": int(np.sum(finite)),
+        "nonfinite_mass_event_count": int(np.sum(~finite)),
+        "selected_event_count": int(np.sum(selected)),
+    }
+    return selected, metadata
+
+
+def mass_window_suffix(metadata: dict[str, Any]) -> str:
+    def token(value: float) -> str:
+        return f"{value:g}".replace("-", "m").replace(".", "p")
+
+    minimum, maximum = metadata["range"]
+    return f"mass_window_{token(minimum)}_{token(maximum)}"
+
+
+def mark_mass_window_result(
+    result: dict[str, Any], metadata: dict[str, Any]
+) -> None:
+    result["additional_mass_window"] = True
+    result["mass_window"] = metadata
+    result["baseline_semantics"] = (
+        "Mass-window selected MC population before any score cut; finite "
+        "non-negative analysis weight required, but no finite-score requirement."
+    )
+    result["scan_population"] = (
+        "Mass-window selected MC population with finite score and finite "
+        "non-negative analysis weight."
+    )
+    for signal_name, signal_result in result["signals"].items():
+        signal_result["signal_definition"] = (
+            f"mass-window selected truth category == {signal_name}"
+        )
+        signal_result["background_definition"] = (
+            "all other mass-window selected MC events "
+            f"(truth category != {signal_name})"
+        )
+
+
 def _format_summary(payload: dict[str, Any]) -> str:
+    mass_window = payload["mass_window"]
     lines = [
         "=== NN Score Significance Scans ===",
         f"Channel: {payload['channel']}",
         "Metric: Z = S / sqrt(S + B)",
         "Weight: sample_norm * abs(weight)",
-        "Additional mass window: no",
+        "Inclusive scans: yes",
+        "Additional mass-window scans: "
+        + (
+            mass_window["boundary_semantics"]
+            if mass_window is not None
+            else "no"
+        ),
         "Signal: exactly one configured NN-study truth category",
         "Background: every other selected MC event",
     ]
-    for scan in payload["scans"]:
-        lines.extend(
-            [
-                "",
-                f"Score: {scan['score_branch']}",
-                f"Cut: keep {scan['score_branch']} {scan['direction']} cut",
-                f"Range/points: {scan['scan_min']:g} to {scan['scan_max']:g} / "
-                f"{scan['scan_points']}",
-            ]
-        )
-        for signal_name, result in scan["signals"].items():
-            lines.append(
-                f"  {signal_name}: baseline Z={result['baseline_significance']:.9g}; "
-                f"scan maximum cut={result['best_threshold']:.9g}, "
-                f"Z={result['best_significance']:.9g}"
+    scan_groups = [("Inclusive", payload["scans"])]
+    if payload["mass_window_scans"]:
+        scan_groups.append(("Mass window", payload["mass_window_scans"]))
+    for group_label, scans in scan_groups:
+        lines.extend(["", f"--- {group_label} ---"])
+        for scan in scans:
+            lines.extend(
+                [
+                    "",
+                    f"Score: {scan['score_branch']}",
+                    f"Cut: keep {scan['score_branch']} {scan['direction']} cut",
+                    f"Range/points: {scan['scan_min']:g} to {scan['scan_max']:g} / "
+                    f"{scan['scan_points']}",
+                ]
             )
+            for signal_name, result in scan["signals"].items():
+                lines.append(
+                    f"  {signal_name}: baseline Z={result['baseline_significance']:.9g}; "
+                    f"scan maximum cut={result['best_threshold']:.9g}, "
+                    f"Z={result['best_significance']:.9g}"
+                )
     return "\n".join(lines) + "\n"
 
 
@@ -319,8 +404,13 @@ def run_score_significance(
     settings = config.score_significance
     truths_by_name = {truth.name: truth for truth in config.truth_categories}
     scan_payloads: list[dict[str, Any]] = []
+    mass_window_scan_payloads: list[dict[str, Any]] = []
     plots: list[str] = []
     significance_plot_dir = plot_dir / "score_significance"
+    mass_window_selection = build_significance_mass_window_selection(
+        config=config,
+        dataset=dataset,
+    )
     for scan in settings.scans:
         thresholds = np.linspace(
             scan.scan_min,
@@ -368,14 +458,63 @@ def run_score_significance(
         scan_payloads.append(result)
         plots.append(str(path))
 
+        if mass_window_selection is not None:
+            mass_mask, mass_window_metadata = mass_window_selection
+            mass_result = calculate_score_significance_scan(
+                score=dataset.scores[scan.score_name][mass_mask],
+                weights=dataset.analysis_weight[mass_mask],
+                truth_index=dataset.truth_index[mass_mask],
+                truth_names=config.truth_names,
+                signals=settings.signals,
+                thresholds=thresholds,
+                direction=scan.direction,
+            )
+            mark_mass_window_result(mass_result, mass_window_metadata)
+            mass_result.update(
+                {
+                    "score_name": scan.score_name,
+                    "score_branch": scan.score_branch,
+                    "scan_min": scan.scan_min,
+                    "scan_max": scan.scan_max,
+                    "scan_points": scan.scan_points,
+                }
+            )
+            mass_path = significance_plot_dir / (
+                f"{scan.score_branch}__significance_s_over_sqrt_s_plus_b__"
+                f"{mass_window_suffix(mass_window_metadata)}{plot_suffix}"
+            )
+            plot_score_significance(
+                outpath=mass_path,
+                thresholds=thresholds,
+                signal_results=mass_result["signals"],
+                signal_styles={
+                    name: {
+                        "label": truths_by_name[name].label,
+                        "color": truths_by_name[name].color,
+                    }
+                    for name in settings.signals
+                },
+                score_branch=scan.score_branch,
+                direction=scan.direction,
+                xscale="linear",
+                selection_label=mass_window_metadata["boundary_semantics"],
+            )
+            mass_result["plot"] = str(mass_path)
+            mass_window_scan_payloads.append(mass_result)
+            plots.append(str(mass_path))
+
     payload: dict[str, Any] = {
-        "schema_version": 1,
+        "schema_version": 2,
         "channel": config.channel,
         "metric": settings.metric,
         "signals": settings.signals,
         "weighting": "sample_norm * abs(raw event weight)",
-        "additional_mass_window": False,
+        "additional_mass_window": mass_window_selection is not None,
+        "mass_window": (
+            None if mass_window_selection is None else mass_window_selection[1]
+        ),
         "scans": scan_payloads,
+        "mass_window_scans": mass_window_scan_payloads,
         "plots": plots,
     }
     write_json(summary_dir / "score_significance.json", payload)

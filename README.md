@@ -1103,6 +1103,25 @@ score requirement. In particular, `score_ttLF < 0.8` is not treated as the
 uncut baseline. Scan maxima are diagnostics only and are never written back as
 final working points.
 
+All 0L/1L v1-v3 configs additionally define a shared significance region:
+
+```json
+"significance_mass_window": {
+  "enabled": true,
+  "branch": "TargetFatJet_regressed_mass_generic",
+  "range": [100.0, 150.0]
+}
+```
+
+The endpoints are inclusive. Existing inclusive significance scans and files
+remain unchanged; each score also gets a second scan in which both the uncut
+baseline and every score-cut point use only events satisfying
+`100 <= TargetFatJet_regressed_mass_generic <= 150`. The mass-window plots are
+named
+`score_<name>__significance_s_over_sqrt_s_plus_b__mass_window_100_150.png`,
+and their complete payload is stored under `mass_window_scans` in
+`summaries/score_significance.json`.
+
 Run only the ttX/ttLF scans with:
 
 ```bash
@@ -1209,6 +1228,15 @@ truth-category/everything-else definitions above, marks the seven configured
 candidate cuts, and annotates each numerical scan maximum. The existing
 QCD-scan JSON/text summary records the full curves, candidate-point S/B/Z, true
 uncut baselines, and best-point metadata.
+
+The shared `significance_mass_window` also applies to the 0L QCD
+`S/sqrt(S+B)` scan without changing the inclusive QCD yield/efficiency plots.
+Its additional output is
+`plots/qcd_score_scan/qcd_cut_scan__significance_s_over_sqrt_s_plus_b__mass_window_100_150.png`.
+The QCD summary records window-selected event counts, inclusive boundaries,
+the full log scan, both signal definitions, and all seven exact candidate-cut
+S/B/Z values under
+`scan.score_significance_s_over_sqrt_s_plus_b_mass_window`.
 
 The additional `qcd_score_distribution.png` compares independently normalized
 weighted shapes for `ttHcc`, `tt+light`, `tt+>=1c`, `tt+>=1b`, and QCD using

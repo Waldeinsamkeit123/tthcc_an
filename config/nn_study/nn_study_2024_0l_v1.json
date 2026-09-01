@@ -51,6 +51,11 @@
     "roc_dpi": 100,
     "auc_dpi": 150
   },
+  "significance_mass_window": {
+    "enabled": true,
+    "branch": "TargetFatJet_regressed_mass_generic",
+    "range": [100.0, 150.0]
+  },
   "weighting_diagnostics": {
     "enabled": true,
     "reweight_variables": {
