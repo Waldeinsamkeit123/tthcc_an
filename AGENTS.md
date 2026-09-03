@@ -39,7 +39,7 @@ source /cvmfs/sft.cern.ch/lcg/views/LCG_108/x86_64-el9-gcc15-opt/setup.sh
 
 ```bash
 python scripts/run_boosted_higgs_tagger_study.py \
-  --config config/samples_2024_add_nonttbarmatch_allmc.json
+  --config config/boosted_higgs_tagger_study/samples_2024_add_nonttbarmatch_allmc.json
 ```
 
 当前 shipping 的 2024 boosted-study config 指向：
@@ -47,7 +47,7 @@ python scripts/run_boosted_higgs_tagger_study.py \
 - ntuple 目录：`/eos/user/h/hanw/ttHcc/pepper_data/2024/add_nonttbarmatch_event`
 - `gen_sumw`：`/eos/user/h/hanw/ttHcc/pepper_data/2024/add_nonttbarmatch/gen_sumws.json`
 
-若用户要重做 `gpart_higgs_vs_qcd` vs `gpart_xbb_vs_xcc` 的 `QCD mistag eff = 0.1% / 0.5%` 研究，记得显式传：
+若用户要重做 `gpart_higgs_vs_qcd` vs `gpart_xbb_vs_xcc` 的 `QCD mistag eff = 0.1% / 0.4%` 研究，记得显式传：
 
 ```bash
 --xbb-vs-xcc-region-preset tight
@@ -61,7 +61,7 @@ python scripts/run_boosted_higgs_tagger_study.py \
 
 ```bash
 python scripts/run_boosted_higgs_tagger_study.py \
-  --config config/samples_2024_add_nonttbarmatch_allmc.json \
+  --config config/boosted_higgs_tagger_study/samples_2024_add_nonttbarmatch_allmc.json \
   --plot-only \
   --plot-input outputs/boosted_higgs_tagger_study_2024_tight_20260525/plot_input.npz \
   --outdir outputs/boosted_higgs_tagger_study_2024_tight_20260525 \
@@ -74,7 +74,7 @@ python scripts/run_boosted_higgs_tagger_study.py \
 
 ```bash
 python scripts/run_boosted_higgs_tagger_study.py \
-  --config config/samples_2024_add_nonttbarmatch_allmc.json \
+  --config config/boosted_higgs_tagger_study/samples_2024_add_nonttbarmatch_allmc.json \
   --max-files-per-sample 1 \
   --xbb-vs-xcc-region-preset tight \
   --outdir outputs/boosted_higgs_tagger_study_2024_smoke_tight
@@ -84,7 +84,7 @@ python scripts/run_boosted_higgs_tagger_study.py \
 
 ```bash
 python scripts/run_boosted_higgs_tagger_study.py \
-  --config config/samples_2024_add_nonttbarmatch_allmc.json \
+  --config config/boosted_higgs_tagger_study/samples_2024_add_nonttbarmatch_allmc.json \
   --xbb-vs-xcc-region-preset tight \
   --outdir outputs/boosted_higgs_tagger_study_2024_tight
 ```
@@ -93,7 +93,7 @@ python scripts/run_boosted_higgs_tagger_study.py \
 
 ```bash
 python scripts/submit_boosted_higgs_tagger_condor.py \
-  --config config/samples_2024_add_nonttbarmatch_allmc.json \
+  --config config/boosted_higgs_tagger_study/samples_2024_add_nonttbarmatch_allmc.json \
   --workflow-mode chunked \
   --files-per-chunk 20 \
   --condor-dir condor/boosted_higgs_tagger_2024_tight \
@@ -522,7 +522,7 @@ cache structural definition 包括 input location/pattern、tree、selection、t
   - config JSON
   - 内建 fallback
 - shipping 的 2024 boosted config 默认 `xbb_vs_xcc_region_preset = loose`
-- 若用户要重做 `QCD mistag eff = 0.1% / 0.5%` 的 `xbb-vs-xcc` contour / fixed-other scan，使用 `--xbb-vs-xcc-region-preset tight`
+- 若用户要重做 `QCD mistag eff = 0.1% / 0.4%` 的 `xbb-vs-xcc` contour / fixed-other scan，使用 `--xbb-vs-xcc-region-preset tight`
 - 当前所有图统一使用 `CMS Simulation` 标注；除非用户明确要求，否则不要恢复 `Private Work`
 - 当前 tight contour 常用输出是 `outputs/boosted_higgs_tagger_study_2024_tight_20260525`
 - `Hbb` / `Hcc` contour label 现在通过 slightly-left-shifted + `ha='right'` 避免挤出画布；若要继续调位置，看 `definitions.py` 和 `plotting.py`
@@ -654,7 +654,7 @@ python3 -m compileall src/tthcc_an src/tthcc_an/event_bdt scripts
 
 ```bash
 python scripts/run_boosted_higgs_tagger_study.py \
-  --config config/samples_2024_add_nonttbarmatch_allmc.json \
+  --config config/boosted_higgs_tagger_study/samples_2024_add_nonttbarmatch_allmc.json \
   --targets hcc \
   --scores gpart_h2cc \
   --max-files-per-sample 1 \
@@ -665,7 +665,7 @@ python scripts/run_boosted_higgs_tagger_study.py \
 
 ```bash
 python scripts/run_boosted_higgs_tagger_study.py \
-  --config config/samples_2024_add_nonttbarmatch_allmc.json \
+  --config config/boosted_higgs_tagger_study/samples_2024_add_nonttbarmatch_allmc.json \
   --plot-only \
   --plot-input outputs/boosted_higgs_tagger_study_2024_tight_20260525/plot_input.npz \
   --outdir outputs/boosted_higgs_tagger_study_2024_tight_20260525 \

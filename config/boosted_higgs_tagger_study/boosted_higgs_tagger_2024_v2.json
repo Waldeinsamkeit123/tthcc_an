@@ -1,0 +1,23 @@
+{
+  "extends": "boosted_higgs_tagger_2024_hcc_wp_v1.json",
+  "study": {
+    "outdir": "outputs/boosted_higgs_tagger_study_2024_v2",
+    "inclusive_higgs_wp": {
+      "enabled": true
+    },
+    "y_split_study": {
+      "enabled": true,
+      "inclusive_higgs_qcd_targets": [0.01, 0.02],
+      "diagnostic_candidates": [
+        {
+          "y_split": 0.80,
+          "role": "nominal_candidate_for_further_study"
+        },
+        {
+          "y_split": 0.85,
+          "role": "historical_reference_candidate"
+        }
+      ]
+    }
+  }
+}

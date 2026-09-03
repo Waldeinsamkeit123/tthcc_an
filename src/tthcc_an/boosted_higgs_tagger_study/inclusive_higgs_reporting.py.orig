@@ -1,0 +1,438 @@
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+import matplotlib.pyplot as plt
+import mplhep as hep
+import numpy as np
+
+from tthcc_an.boosted_higgs_tagger_study.definitions import TRUTH_LABEL_TO_CODE
+from tthcc_an.boosted_higgs_tagger_study.inclusive_higgs_wp import NON_HIGGS_TRUTH_CODES
+from tthcc_an.boosted_higgs_tagger_study.plotting import (
+    PlotStyle,
+    private_cms_label,
+)
+from tthcc_an.boosted_higgs_tagger_study.reporting import write_csv, write_json
+
+
+PROCESS_COLORS = {
+    "ttHcc": "#c43c39",
+    "ttHbb": "#2364aa",
+    "qcd": "#343a40",
+}
+TRUTH_COLORS = {
+    "hcc_pure": "#c43c39",
+    "hbb_pure": "#2364aa",
+    "inclusive": "#d18f00",
+}
+
+
+def _finite_or_none(value: float) -> float | None:
+    return float(value) if np.isfinite(value) else None
+
+
+def inclusive_scan_rows(result: dict[str, Any]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for index, x_cut in enumerate(result["x_cuts"]):
+        row: dict[str, Any] = {
+            "x_cut": float(x_cut),
+            "non_higgs_jet_efficiency": float(result["non_higgs_jet_efficiency"][index]),
+            "non_higgs_jet_rejection_fraction": float(
+                result["non_higgs_jet_rejection_fraction"][index]
+            ),
+            "qcd_process_jet_efficiency": float(result["qcd_process_jet_efficiency"][index]),
+            "non_higgs_jet_inverse_efficiency": _finite_or_none(
+                result["non_higgs_jet_inverse_efficiency"][index]
+            ),
+            "qcd_process_jet_rejection_fraction": float(
+                result["qcd_process_jet_rejection_fraction"][index]
+            ),
+            "hcc_pure_jet_efficiency": float(
+                result["truth_efficiencies"]["hcc_pure"][index]
+            ),
+            "hbb_pure_jet_efficiency": float(
+                result["truth_efficiencies"]["hbb_pure"][index]
+            ),
+            "inclusive_pure_higgs_jet_efficiency": float(
+                result["inclusive_pure_higgs_efficiency"][index]
+            ),
+            "top_jet_efficiency": float(
+                result["truth_efficiencies"]["top"][index]
+            ),
+            "other_jet_efficiency": float(
+                result["truth_efficiencies"]["other"][index]
+            ),
+            "event_x_cut_evaluated": float(
+                result["event_evaluated_x_cuts"][index]
+            ),
+            "event_values_are_coarse": bool(
+                result["precision"]["event_values_are_coarse"]
+            ),
+            "total_background_event_yield": float(
+                result["total_background_event_yield"][index]
+            ),
+            "total_background_event_efficiency": float(
+                result["total_background_event_efficiency"][index]
+            ),
+        }
+        for process in result["event_yields"]:
+            row[f"{process}_event_yield"] = float(
+                result["event_yields"][process][index]
+            )
+            row[f"{process}_event_efficiency"] = float(
+                result["event_efficiencies"][process][index]
+            )
+        rows.append(row)
+    return rows
+
+
+def inclusive_higgs_purity_scan(result: dict[str, Any]) -> np.ndarray:
+    truth_yields = np.asarray(result["truth_yields"], dtype=np.float64)
+    signal = (
+        truth_yields[TRUTH_LABEL_TO_CODE["hcc_pure"]]
+        + truth_yields[TRUTH_LABEL_TO_CODE["hbb_pure"]]
+    )
+    background = np.sum(truth_yields[list(NON_HIGGS_TRUTH_CODES)], axis=0)
+    denominator = signal + background
+    return np.divide(
+        signal, denominator, out=np.zeros_like(signal), where=denominator > 0.0
+    )
+
+
+def _percent(value: float) -> str:
+    return f"{100.0 * value:.6g}%"
+
+
+def _summary_text(payload: dict[str, Any]) -> str:
+    candidate = payload["candidate_selection"]
+    precision = payload["precision"]
+    lines = [
+        "=== Inclusive Higgs Working-Point Study ===",
+        "Region: x >= x_Higgs; no y requirement is applied",
+        "x = (Xbb + Xcc) / (Xbb + Xcc + QCD)",
+        "WP background definition: non-Higgs truth candidate jets",
+        "WP selection: loosest x cut satisfying the requested weighted non-Higgs jet efficiency",
+        "non-Higgs = everything except hcc_pure and hbb_pure",
+        (
+            "Candidate preselection: "
+            f"pt {candidate['pt_convention']} {candidate['pt_min']:.1f} GeV, "
+            f"|eta| {candidate['eta_convention']} {candidate['eta_abs_max']:.2f}, "
+            f"{candidate['mass_window_low']:.1f} < {candidate['mass_variable']} "
+            f"< {candidate['mass_window_high']:.1f} GeV"
+        ),
+        f"Source: {precision['source']}",
+        f"Jet precision: {precision['jet_scan']}",
+        f"Event precision: {precision['event_scan']}",
+        f"Event values are coarse: {precision['event_values_are_coarse']}",
+        "",
+        "Candidate-baseline expected event yields:",
+    ]
+    for process in ("ttHcc", "ttHbb", "qcd"):
+        lines.append(
+            f"  {process}: {payload['event_baseline_yields'][process]:.9g}"
+        )
+    lines.extend(["", "Requested non-Higgs-mistag working points:"])
+    for row in payload["recommendations"]:
+        lines.extend(
+            [
+                "",
+                f"Target non-Higgs jet mistag = {_percent(row['target_non_higgs_jet_efficiency'])}",
+                f"  x_cut = {row['x_cut']:.6f}",
+                (
+                    "  achieved non-Higgs jet efficiency = "
+                    f"{_percent(row['achieved_non_higgs_jet_efficiency'])}"
+                ),
+                (
+                    "  achieved - requested = "
+                    f"{row['achieved_minus_requested_non_higgs_efficiency']:+.8g}"
+                ),
+                (
+                    "  process-QCD jet efficiency (diagnostic) = "
+                    f"{_percent(row['qcd_process_jet_efficiency'])}"
+                ),
+                (
+                    "  event x cut evaluated = "
+                    f"{row['event_x_cut_evaluated']:.6f}"
+                ),
+                (
+                    "  hcc_pure / hbb_pure / inclusive pure-Higgs jet efficiency = "
+                    f"{_percent(row['hcc_pure_jet_efficiency'])} / "
+                    f"{_percent(row['hbb_pure_jet_efficiency'])} / "
+                    f"{_percent(row['inclusive_pure_higgs_jet_efficiency'])}"
+                ),
+            ]
+        )
+        for process in ("ttHcc", "ttHbb", "qcd"):
+            lines.append(
+                f"  {process}: event efficiency="
+                f"{_percent(row[f'{process}_event_efficiency'])}, "
+                f"yield={row[f'{process}_event_yield']:.9g}"
+            )
+    lines.extend(
+        [
+            "",
+            "Historical loose/tight x values are region references only; they include y cuts",
+            "and are not Inclusive Higgs non-Higgs-mistag working points.",
+            "No nominal final WP is selected by this study.",
+            "No y-split optimization is performed.",
+        ]
+    )
+    return "\n".join(lines) + "\n"
+
+
+def write_inclusive_higgs_wp_outputs(
+    result: dict[str, Any],
+    outdirs: dict[str, Path],
+    candidate_selection: dict[str, Any],
+    historical_references: list[dict[str, Any]],
+) -> dict[str, Any]:
+    rows = inclusive_scan_rows(result)
+    payload = {
+        "status": "available",
+        "score_definition": "x = (Xbb + Xcc) / (Xbb + Xcc + QCD)",
+        "region_definition": "x >= x_Higgs",
+        "no_y_requirement": True,
+        "wp_selection": (
+            "loosest configured x cut with weighted non-Higgs truth candidate-jet "
+            "efficiency <= requested target"
+        ),
+        "wp_background_definition": "non_higgs_truth_candidate_jets",
+        "non_higgs_truth_labels": result["non_higgs_truth_labels"],
+        "process_qcd_is_secondary_diagnostic_only": True,
+        "candidate_selection": candidate_selection,
+        "config": result["config"],
+        "precision": result["precision"],
+        "historical_region_references": historical_references,
+        "historical_references_are_not_inclusive_wps": True,
+        "event_baseline_definition": (
+            "events with >=1 candidate fatjet before any x requirement; each event weighted once"
+        ),
+        "event_baseline_yields": result["event_baselines"],
+        "recommendations_are_diagnostics_not_final_wp": True,
+        "recommendations": result["recommendations"],
+        "scan": rows,
+        "y_split_optimization_performed": False,
+    }
+    write_csv(outdirs["tables"] / "inclusive_higgs_wp_scan.csv", rows)
+    write_csv(
+        outdirs["tables"] / "inclusive_higgs_wp_recommendations.csv",
+        result["recommendations"],
+    )
+    write_json(outdirs["summaries"] / "inclusive_higgs_wp.json", payload)
+    (outdirs["summaries"] / "inclusive_higgs_wp.txt").write_text(
+        _summary_text(payload),
+        encoding="utf-8",
+    )
+    return payload
+
+
+def _finish_plot(
+    fig: plt.Figure,
+    ax: plt.Axes,
+    outpath: Path,
+    plot_style: PlotStyle,
+    *,
+    legend: bool = True,
+) -> None:
+    ax.tick_params(axis="both", labelsize=plot_style.tick_size)
+    if legend:
+        ax.legend(fontsize=plot_style.legend_size, frameon=False)
+    private_cms_label(ax, plot_style)
+    fig.subplots_adjust(left=0.13, right=0.97, bottom=0.14, top=0.88)
+    fig.savefig(outpath, dpi=plot_style.dpi)
+    plt.close(fig)
+
+
+def _add_wp_lines(ax: plt.Axes, recommendations: list[dict[str, Any]]) -> None:
+    colors = plt.get_cmap("YlOrRd")(np.linspace(0.35, 0.9, len(recommendations)))
+    for color, row in zip(colors, recommendations):
+        ax.axvline(row["x_cut"], color=color, linestyle="--", linewidth=1.0, alpha=0.85)
+
+
+def _add_historical_lines(
+    ax: plt.Axes,
+    historical_references: list[dict[str, Any]],
+) -> None:
+    seen: set[float] = set()
+    for reference in historical_references:
+        x_cut = float(reference["x_cut"])
+        if x_cut in seen:
+            continue
+        seen.add(x_cut)
+        ax.axvline(
+            x_cut,
+            color="#6c757d",
+            linestyle=":",
+            linewidth=1.0,
+            alpha=0.7,
+            label="historical region references" if len(seen) == 1 else None,
+        )
+
+
+def plot_inclusive_higgs_wp(
+    result: dict[str, Any],
+    outdir: Path,
+    plot_style: PlotStyle,
+    historical_references: list[dict[str, Any]],
+) -> None:
+    outdir.mkdir(parents=True, exist_ok=True)
+    plt.style.use(hep.style.CMS)
+    x_cuts = result["x_cuts"]
+    recommendations = result["recommendations"]
+
+    fig, ax = plt.subplots(figsize=(9.2, 7.0))
+    positive = np.maximum(result["non_higgs_jet_efficiency"], 1.0e-8)
+    ax.semilogy(x_cuts, positive, color=PROCESS_COLORS["qcd"], linewidth=2.0)
+    for row in recommendations:
+        ax.scatter(
+            row["x_cut"],
+            max(row["achieved_non_higgs_jet_efficiency"], 1.0e-8),
+            s=42,
+            zorder=4,
+            label=f"{100 * row['target_non_higgs_jet_efficiency']:g}% target",
+        )
+    _add_historical_lines(ax, historical_references)
+    ax.set_xlabel("gParT3 Higgs vs QCD lower cut", fontsize=plot_style.label_size)
+    ax.set_ylabel("Weighted non-Higgs candidate-jet efficiency", fontsize=plot_style.label_size)
+    ax.set_xlim(float(x_cuts[0]), float(x_cuts[-1]))
+    ax.set_ylim(1.0e-5, 1.1)
+    _finish_plot(
+        fig,
+        ax,
+        outdir / "non_higgs_jet_efficiency_vs_x_cut.png",
+        plot_style,
+    )
+
+    fig, ax = plt.subplots(figsize=(9.2, 7.0))
+    purity = inclusive_higgs_purity_scan(result)
+    ax.plot(
+        x_cuts,
+        purity,
+        color="#2a6f6b",
+        linewidth=2.0,
+        label="Pure Higgs vs non-Higgs",
+    )
+    _add_wp_lines(ax, recommendations)
+    nominal = next(
+        row
+        for row in recommendations
+        if np.isclose(row["target_non_higgs_jet_efficiency"], 0.02)
+    )
+    nominal_index = int(np.flatnonzero(np.isclose(x_cuts, nominal["x_cut"]))[0])
+    ax.scatter(
+        [nominal["x_cut"]],
+        [purity[nominal_index]],
+        color="#d62728",
+        s=42,
+        zorder=4,
+        label="2% non-Higgs WP: x={:.3f}".format(nominal["x_cut"]),
+    )
+    ax.set_xlabel("gParT3 Higgs vs QCD lower cut", fontsize=plot_style.label_size)
+    ax.set_ylabel("Weighted jet purity S/(S+B)", fontsize=plot_style.label_size)
+    ax.set_xlim(float(x_cuts[0]), float(x_cuts[-1]))
+    ax.set_ylim(0.0, 1.05)
+    _finish_plot(
+        fig,
+        ax,
+        outdir / "higgs_vs_non_higgs__s_over_s_plus_b_scan.png",
+        plot_style,
+    )
+
+    fig, ax = plt.subplots(figsize=(9.2, 7.0))
+    for label, values, title in (
+        ("hcc_pure", result["truth_efficiencies"]["hcc_pure"], "hcc_pure"),
+        ("hbb_pure", result["truth_efficiencies"]["hbb_pure"], "hbb_pure"),
+        ("inclusive", result["inclusive_pure_higgs_efficiency"], "hcc_pure + hbb_pure"),
+    ):
+        ax.plot(x_cuts, values, linewidth=2.0, color=TRUTH_COLORS[label], label=title)
+    _add_wp_lines(ax, recommendations)
+    _add_historical_lines(ax, historical_references)
+    ax.set_xlabel("gParT3 Higgs vs QCD lower cut", fontsize=plot_style.label_size)
+    ax.set_ylabel("Weighted pure-Higgs jet efficiency", fontsize=plot_style.label_size)
+    ax.set_xlim(float(x_cuts[0]), float(x_cuts[-1]))
+    ax.set_ylim(0.0, 1.05)
+    _finish_plot(fig, ax, outdir / "pure_higgs_jet_efficiency_vs_x_cut.png", plot_style)
+
+    fig, ax = plt.subplots(figsize=(9.2, 7.0))
+    non_higgs = np.maximum(result["non_higgs_jet_efficiency"], 1.0e-8)
+    for label, values, title in (
+        ("hcc_pure", result["truth_efficiencies"]["hcc_pure"], "hcc_pure"),
+        ("hbb_pure", result["truth_efficiencies"]["hbb_pure"], "hbb_pure"),
+        ("inclusive", result["inclusive_pure_higgs_efficiency"], "hcc_pure + hbb_pure"),
+    ):
+        ax.semilogx(non_higgs, values, linewidth=2.0, color=TRUTH_COLORS[label], label=title)
+        for row in recommendations:
+            index = int(np.searchsorted(x_cuts, row["x_cut"], side="left"))
+            ax.scatter(non_higgs[index], values[index], color=TRUTH_COLORS[label], s=28, zorder=4)
+    ax.set_xlabel("Weighted non-Higgs candidate-jet efficiency", fontsize=plot_style.label_size)
+    ax.set_ylabel("Weighted pure-Higgs jet efficiency", fontsize=plot_style.label_size)
+    ax.set_xlim(1.0e-5, 1.0)
+    ax.set_ylim(0.0, 1.05)
+    _finish_plot(fig, ax, outdir / "signal_efficiency_vs_non_higgs_mistag.png", plot_style)
+
+    fig, ax = plt.subplots(figsize=(9.2, 7.0))
+    for process in ("ttHcc", "ttHbb", "qcd"):
+        ax.plot(
+            x_cuts,
+            result["event_efficiencies"][process],
+            linewidth=2.0,
+            color=PROCESS_COLORS[process],
+            label=process,
+        )
+    _add_wp_lines(ax, recommendations)
+    _add_historical_lines(ax, historical_references)
+    ax.set_xlabel("gParT3 Higgs vs QCD lower cut", fontsize=plot_style.label_size)
+    ax.set_ylabel("Event efficiency from candidate baseline", fontsize=plot_style.label_size)
+    ax.set_xlim(float(x_cuts[0]), float(x_cuts[-1]))
+    ax.set_ylim(0.0, 1.05)
+    _finish_plot(fig, ax, outdir / "event_efficiency_vs_x_cut.png", plot_style)
+
+    fig, ax = plt.subplots(figsize=(9.2, 7.0))
+    for process in ("ttHcc", "ttHbb", "qcd"):
+        ax.semilogy(
+            x_cuts,
+            np.maximum(result["event_yields"][process], 1.0e-12),
+            linewidth=2.0,
+            color=PROCESS_COLORS[process],
+            label=process,
+        )
+    _add_wp_lines(ax, recommendations)
+    _add_historical_lines(ax, historical_references)
+    ax.set_xlabel("gParT3 Higgs vs QCD lower cut", fontsize=plot_style.label_size)
+    ax.set_ylabel("Expected 2024 event yield", fontsize=plot_style.label_size)
+    ax.set_xlim(float(x_cuts[0]), float(x_cuts[-1]))
+    _finish_plot(fig, ax, outdir / "expected_event_yield_vs_x_cut.png", plot_style)
+
+    labels = [f"{100 * row['target_non_higgs_jet_efficiency']:g}%" for row in recommendations]
+    positions = np.arange(len(labels), dtype=float)
+    fig, ax = plt.subplots(figsize=(9.2, 7.0))
+    for process in ("ttHcc", "ttHbb", "qcd"):
+        ax.plot(
+            positions,
+            [row[f"{process}_event_efficiency"] for row in recommendations],
+            marker="o",
+            linewidth=2.0,
+            color=PROCESS_COLORS[process],
+            label=process,
+        )
+    ax.set_xticks(positions, labels)
+    ax.set_xlabel("Requested non-Higgs jet mistag budget", fontsize=plot_style.label_size)
+    ax.set_ylabel("Event efficiency from candidate baseline", fontsize=plot_style.label_size)
+    ax.set_ylim(0.0, 1.05)
+    _finish_plot(fig, ax, outdir / "five_wp_event_efficiency_comparison.png", plot_style)
+
+    fig, ax = plt.subplots(figsize=(9.2, 7.0))
+    for process in ("ttHcc", "ttHbb", "qcd"):
+        ax.semilogy(
+            positions,
+            [max(row[f"{process}_event_yield"], 1.0e-12) for row in recommendations],
+            marker="o",
+            linewidth=2.0,
+            color=PROCESS_COLORS[process],
+            label=process,
+        )
+    ax.set_xticks(positions, labels)
+    ax.set_xlabel("Requested non-Higgs jet mistag budget", fontsize=plot_style.label_size)
+    ax.set_ylabel("Expected 2024 event yield", fontsize=plot_style.label_size)
+    _finish_plot(fig, ax, outdir / "five_wp_expected_yield_comparison.png", plot_style)

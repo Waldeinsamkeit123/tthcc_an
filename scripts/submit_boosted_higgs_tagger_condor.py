@@ -18,9 +18,9 @@ SRC_ROOT = REPO_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
-from tthcc_an.config_loader import (
+from tthcc_an.boosted_higgs_tagger_study.config import (
     expand_file_patterns as _expand_file_patterns,
-    load_json_maybe_with_comments as _load_json_maybe_with_comments,
+    load_boosted_config_payload,
     resolve_output_dir as _resolve_output_dir,
 )
 
@@ -237,7 +237,7 @@ def chunked(items: list[str], size: int) -> list[list[str]]:
 
 
 def load_expanded_samples(config_path: Path) -> dict[str, Any]:
-    payload = _load_json_maybe_with_comments(config_path)
+    payload = load_boosted_config_payload(config_path)
     samples = payload.get("samples", [])
     if not samples:
         raise ValueError(f"No samples found in configuration: {config_path}")
@@ -252,6 +252,8 @@ def load_expanded_samples(config_path: Path) -> dict[str, Any]:
 
     return {
         "normalization": payload.get("normalization", {}),
+        "study": payload.get("study", {}),
+        "plot": payload.get("plot", {}),
         "samples": expanded_samples,
     }
 
@@ -274,6 +276,8 @@ def build_chunk_manifests(
             chunk_output_path = chunk_output_dir / f"chunk_{chunk_index:04d}.npz"
             manifest_payload = {
                 "normalization": normalization,
+                "study": config_payload.get("study", {}),
+                "plot": config_payload.get("plot", {}),
                 "samples": [{**sample, "files": file_group}],
             }
             write_text(manifest_path, json.dumps(manifest_payload, indent=2))

@@ -4,7 +4,11 @@ from typing import Any
 
 import numpy as np
 
-from tthcc_an.definitions import TARGET_DEFINITIONS, TRUTH_LABEL_ORDER, TRUTH_LABEL_TO_CODE
+from tthcc_an.boosted_higgs_tagger_study.definitions import (
+    TARGET_DEFINITIONS,
+    TRUTH_LABEL_ORDER,
+    TRUTH_LABEL_TO_CODE,
+)
 
 
 def safe_divide(numerator: np.ndarray, denominator: np.ndarray) -> np.ndarray:

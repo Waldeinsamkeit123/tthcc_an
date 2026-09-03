@@ -1,0 +1,6 @@
+{
+  "extends": "boosted_higgs_tagger_2024_hcc_wp_v1.json",
+  "study": {
+    "outdir": "outputs/boosted_higgs_tagger_study_2024_y_split_v1"
+  }
+}

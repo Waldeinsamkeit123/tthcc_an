@@ -20,10 +20,12 @@ The current focus of this repository is:
 ## Repository Layout
 
 - `config/`: study configuration files
+  - `config/boosted_higgs_tagger_study/`: boosted-tagger sample and Hcc WP configs
   - `config/event_bdt/`: event-BDT sample and training configs
   - `config/nn_study/`: event-level NN-study configs
 - `scripts/`: runnable entrypoints and submission helpers
 - `src/`: core analysis code
+  - `src/tthcc_an/boosted_higgs_tagger_study/`: boosted-tagger config, dataset, cache, scans, plotting, and reporting
   - `src/tthcc_an/event_bdt/`: event-BDT prototype modules
   - `src/tthcc_an/nn_study/`: event-level NN score-study modules
 - `outputs/`: local study outputs
@@ -195,12 +197,122 @@ For each contour study, the code also writes summary text/JSON products:
 - `summaries/...__fixed_other_efficiency_scan.txt`
 - `summaries/...__fixed_x_ycut_scan.txt`
 
+## Hcc Working-Point Optimization
+
+The boosted-tagger workflow is an independent subsystem under
+`src/tthcc_an/boosted_higgs_tagger_study/`. Its primary 2024 Hcc optimization
+config is:
+
+- `config/boosted_higgs_tagger_study/boosted_higgs_tagger_2024_hcc_wp_v1.json`
+
+The candidate fatjet preselection is config-driven and independent of all
+event-level NN selections:
+
+- `FatJet_pt >= 300 GeV`
+- `abs(FatJet_eta) <= 2.4`
+- `50 < FatJet_msoftdrop < 200 GeV`
+- all passing AK8 jets are retained as jet-level entries
+- no regressed mass, `score_ttX`, `score_qcd`, `score_ttLF`, or later NN cut is used
+
+The optimized rectangle uses:
+
+```text
+x = gpart_higgs_vs_qcd = (Xbb + Xcc) / (Xbb + Xcc + QCD)
+y = gpart_xbb_vs_xcc  = Xbb / (Xbb + Xcc)
+
+Hcc region: x >= x_cut and y <= y_cut
+```
+
+This inclusive `>=` / `<=` convention is used consistently by the new scan.
+The historical contour presets use `x > x_cut` and `0 < y <= y_cut`; their
+coordinates are retained as references and are not silently redefined.
+
+For the primary jet-level optimization:
+
+- signal is `hcc_pure`
+- background is `hbb_pure + hcc_contaminated + hcc_partial + hbb_contaminated + hbb_partial + top + other`
+- each candidate AK8 jet is one entry
+- yields use `sample_norm * abs(weight)`; signed bookkeeping remains `sample_norm * weight`
+- the ranking metric is only `S/sqrt(S+B)`
+- `S/sqrt(B)` is reported as a diagnostic and is not used for ranking
+- the baseline applies the candidate preselection but no x/y score requirement
+- constrained maxima are reported for total-background efficiencies of `0.1%`, `0.5%`, `1%`, `2%`, and `5%`
+
+The event-level reference answers whether an event retains at least one
+candidate fatjet in the Hcc region. Signal is the configured `ttHcc` process;
+background is every other configured MC process. An event is weighted once even
+if several jets pass. No downstream NN selection is applied. New raw caches
+carry a remappable per-entry event index, while histogram chunks store an
+already deduplicated event-level scan aggregate.
+
+The regular 201 x 201 jet scan is evaluated with weighted 2D histograms and
+cumulative sums, rather than 40,401 full jet-array selections. The event scan
+uses a per-event acceptance frontier and cannot be reconstructed from a jet
+histogram.
+
+Main machine-readable outputs are:
+
+- `tables/hcc_wp_scan.csv`
+- `tables/hcc_wp_recommendations.csv`
+- `summaries/hcc_wp_scan.{json,txt}`
+- `plots/hcc_wp_scan/*.png`
+- `tables/hcc_wp_scan_event_level.csv`
+- `summaries/hcc_wp_scan_event_level.{json,txt}`
+- `plots/hcc_wp_scan_event_level/*.png`
+
+Global and constrained maxima are optimization diagnostics only. The code does
+not label any point as the final analysis working point.
+
+The directory
+`outputs/boosted_higgs_tagger_study_2024_tight_20260525` is a read-only
+historical reference. Its `plot_input.npz` was produced after the old
+100-150 GeV mass window and therefore cannot recover jets in 50-100 or
+150-200 GeV. It remains valid for legacy plot-only redraws, but the new Hcc scan
+requires a new ROOT run or new chunk payloads. Legacy caches without event
+identity explicitly report that event-level information is unavailable.
+
+Local smoke test:
+
+```bash
+python scripts/run_boosted_higgs_tagger_study.py \
+  --config config/boosted_higgs_tagger_study/boosted_higgs_tagger_2024_hcc_wp_v1.json \
+  --max-files-per-sample 1 \
+  --outdir outputs/boosted_higgs_tagger_study_2024_hcc_wp_v1_smoke
+```
+
+Full local run after validating the smoke output:
+
+```bash
+python scripts/run_boosted_higgs_tagger_study.py \
+  --config config/boosted_higgs_tagger_study/boosted_higgs_tagger_2024_hcc_wp_v1.json
+```
+
+Recommended chunked production command:
+
+```bash
+python scripts/submit_boosted_higgs_tagger_condor.py \
+  --config config/boosted_higgs_tagger_study/boosted_higgs_tagger_2024_hcc_wp_v1.json \
+  --workflow-mode chunked \
+  --files-per-chunk 20 \
+  --condor-dir condor/boosted_higgs_tagger_2024_hcc_wp_v1 \
+  --request-memory "8 GB" \
+  --merge-request-memory "24 GB" \
+  --job-flavour workday \
+  --merge-job-flavour tomorrow \
+  --submit
+```
+
+The submission helper now copies resolved `study` and `plot` settings into
+every chunk manifest, so scan grid and event-level settings remain config-driven.
+
+
 ## Config Files
 
 Available configs in this repository:
 
-- [config/samples.example.json](/eos/user/h/hanw/ttHcc/tthcc_an/config/samples.example.json)
-- [config/samples_2024_add_nonttbarmatch_allmc.json](/eos/user/h/hanw/ttHcc/tthcc_an/config/samples_2024_add_nonttbarmatch_allmc.json)
+- [config/boosted_higgs_tagger_study/samples.example.json](/eos/user/h/hanw/ttHcc/tthcc_an/config/boosted_higgs_tagger_study/samples.example.json)
+- [config/boosted_higgs_tagger_study/samples_2024_add_nonttbarmatch_allmc.json](/eos/user/h/hanw/ttHcc/tthcc_an/config/boosted_higgs_tagger_study/samples_2024_add_nonttbarmatch_allmc.json)
+- [config/boosted_higgs_tagger_study/boosted_higgs_tagger_2024_hcc_wp_v1.json](/eos/user/h/hanw/ttHcc/tthcc_an/config/boosted_higgs_tagger_study/boosted_higgs_tagger_2024_hcc_wp_v1.json)
 - [config/event_bdt/samples_2024_0l_jecs_v1.json](/eos/user/h/hanw/ttHcc/tthcc_an/config/event_bdt/samples_2024_0l_jecs_v1.json)
 - [config/event_bdt/train_ttHcc_0l_3class_baseline_jecs.json](/eos/user/h/hanw/ttHcc/tthcc_an/config/event_bdt/train_ttHcc_0l_3class_baseline_jecs.json)
 - [config/event_bdt/train_ttHcc_0l_4class_baseline_jecs.json](/eos/user/h/hanw/ttHcc/tthcc_an/config/event_bdt/train_ttHcc_0l_4class_baseline_jecs.json)
@@ -242,7 +354,7 @@ For the `gpart_higgs_vs_qcd` vs `gpart_xbb_vs_xcc` contour plot, two region
 presets are available:
 
 - `loose`: `Hcc x > 0.7333`, `Hbb x > 0.9133`, corresponding to the `QCD` mistag reference at `1%`
-- `tight`: `Hcc x > 0.9467`, `Hbb x > 0.9467`, corresponding to the `QCD` mistag reference at `0.1% / 0.5%`
+- `tight`: `Hcc x > 0.9467`, `Hbb x > 0.9467`, corresponding to the `QCD` mistag reference at `0.1% / 0.4%`
 
 The shipped 2024 config currently points to:
 
@@ -262,20 +374,20 @@ source /cvmfs/sft.cern.ch/lcg/views/LCG_108/x86_64-el9-gcc15-opt/setup.sh
 cd /eos/user/h/hanw/ttHcc/tthcc_an
 
 python scripts/run_boosted_higgs_tagger_study.py \
-  --config config/samples_2024_add_nonttbarmatch_allmc.json \
+  --config config/boosted_higgs_tagger_study/samples_2024_add_nonttbarmatch_allmc.json \
   --max-files-per-sample 1 \
   --xbb-vs-xcc-region-preset tight \
   --outdir outputs/boosted_higgs_tagger_study_2024_smoke_tight
 ```
 
-Full local rerun for the `QCD mistag eff = 0.1% / 0.5%` `xbb-vs-xcc` study:
+Full local rerun for the `historical mistag reference = 0.1% / 0.4%` `xbb-vs-xcc` study:
 
 ```bash
 source /cvmfs/sft.cern.ch/lcg/views/LCG_108/x86_64-el9-gcc15-opt/setup.sh
 cd /eos/user/h/hanw/ttHcc/tthcc_an
 
 python scripts/run_boosted_higgs_tagger_study.py \
-  --config config/samples_2024_add_nonttbarmatch_allmc.json \
+  --config config/boosted_higgs_tagger_study/samples_2024_add_nonttbarmatch_allmc.json \
   --xbb-vs-xcc-region-preset tight \
   --outdir outputs/boosted_higgs_tagger_study_2024_tight
 ```
@@ -288,7 +400,7 @@ source /cvmfs/sft.cern.ch/lcg/views/LCG_108/x86_64-el9-gcc15-opt/setup.sh
 cd /eos/user/h/hanw/ttHcc/tthcc_an
 
 python scripts/run_boosted_higgs_tagger_study.py \
-  --config config/samples_2024_add_nonttbarmatch_allmc.json \
+  --config config/boosted_higgs_tagger_study/samples_2024_add_nonttbarmatch_allmc.json \
   --plot-only \
   --plot-input outputs/boosted_higgs_tagger_study_2024_tight_20260525/plot_input.npz \
   --outdir outputs/boosted_higgs_tagger_study_2024_tight_20260525 \
@@ -302,7 +414,7 @@ source /cvmfs/sft.cern.ch/lcg/views/LCG_108/x86_64-el9-gcc15-opt/setup.sh
 cd /eos/user/h/hanw/ttHcc/tthcc_an
 
 python scripts/submit_boosted_higgs_tagger_condor.py \
-  --config config/samples_2024_add_nonttbarmatch_allmc.json \
+  --config config/boosted_higgs_tagger_study/samples_2024_add_nonttbarmatch_allmc.json \
   --workflow-mode chunked \
   --files-per-chunk 20 \
   --condor-dir condor/boosted_higgs_tagger_2024_tight \
@@ -516,7 +628,7 @@ LCG108
 cd /eos/user/h/hanw/ttHcc/tthcc_an
 
 python scripts/run_boosted_higgs_tagger_study.py \
-  --config config/samples_2024_add_nonttbarmatch_allmc.json
+  --config config/boosted_higgs_tagger_study/samples_2024_add_nonttbarmatch_allmc.json
 ```
 
 ### Restrict scores or targets temporarily
@@ -526,7 +638,7 @@ LCG108
 cd /eos/user/h/hanw/ttHcc/tthcc_an
 
 python scripts/run_boosted_higgs_tagger_study.py \
-  --config config/samples_2024_add_nonttbarmatch_allmc.json \
+  --config config/boosted_higgs_tagger_study/samples_2024_add_nonttbarmatch_allmc.json \
   --targets hcc \
   --scores gpart_h2cc \
   --sig-effs 0.3 0.5 0.7 \
@@ -537,7 +649,7 @@ python scripts/run_boosted_higgs_tagger_study.py \
 
 ```bash
 python scripts/run_boosted_higgs_tagger_study.py \
-  --config config/samples_2024_add_nonttbarmatch_allmc.json \
+  --config config/boosted_higgs_tagger_study/samples_2024_add_nonttbarmatch_allmc.json \
   --candidate-strategy mass_window_all_jets \
   --msd-window-low 100 \
   --msd-window-high 150 \
@@ -548,12 +660,64 @@ python scripts/run_boosted_higgs_tagger_study.py \
 
 ```bash
 python scripts/run_boosted_higgs_tagger_study.py \
-  --config config/samples_2024_add_nonttbarmatch_allmc.json \
+  --config config/boosted_higgs_tagger_study/samples_2024_add_nonttbarmatch_allmc.json \
   --merge-chunks 'condor/<tag>/chunk_outputs/chunk_*.npz' \
   --plot-only \
   --xbb-vs-xcc-region-preset tight \
   --outdir outputs/boosted_higgs_tagger_xbbxcc_tight
 ```
+
+## Unified Boosted Higgs Tagger Workflow
+
+The corrected production config is
+`config/boosted_higgs_tagger_study/boosted_higgs_tagger_2024_v3_nonhiggs_wp.json`.
+The Inclusive Higgs working point is defined by the weighted candidate-fatjet
+mistag efficiency of the non-Higgs truth population:
+
+~~~text
+non-Higgs = hcc_contaminated + hcc_partial
+          + hbb_contaminated + hbb_partial
+          + top + other
+~~~
+
+Equivalently, non-Higgs is everything except `hcc_pure` and `hbb_pure`. Each
+candidate fatjet is one jet-level entry and carries
+`sample_norm * abs(event_weight_raw)`; there is no event deduplication in the
+WP selector. This is distinct from process-level QCD sample efficiency, which
+is retained only as a secondary jet/event diagnostic.
+
+The staged workflow is:
+
+1. Select AK8 candidates with `pt >= 300 GeV`, `|eta| <= 2.4`, and the open
+   interval `50 < msoftdrop < 200 GeV`.
+2. Select the loosest x cut satisfying each requested weighted non-Higgs truth
+   candidate-jet efficiency.
+3. Use the corrected 1% and 2% non-Higgs x cuts in the y-split aggregate, where
+   `Hcc: y <= 0.80` and `Hbb: y > 0.80`.
+
+The provisional downstream strategy is the corrected 2% non-Higgs WP with
+`y=0.80`; the corrected 1% WP is a tighter reference. The old `x>0.9467`,
+`y=0.85` region remains only a historical tight region reference. These are
+analysis choices, not significance-global-maximum selections.
+
+The old `outputs/boosted_higgs_tagger_study_2024_v2` is preserved as a
+historical/debug result based on process-QCD-selected x cuts. The v2 NPZ has
+enough truth-x information to seed corrected v3 Inclusive-Higgs tables and
+plots, but it does not contain the per-event information needed to rebuild
+raw Hcc/Hbb/both/neither counts at the new x cuts. Therefore the marker
+`SEED_FROM_V2_NPZ.txt` remains in the v3 output until full production is run.
+
+### Corrected Production Command
+
+~~~bash
+python scripts/submit_boosted_higgs_tagger_condor.py \
+  --config config/boosted_higgs_tagger_study/boosted_higgs_tagger_2024_v3_nonhiggs_wp.json \
+  --workflow-mode chunked --files-per-chunk 20 \
+  --condor-dir condor/boosted_higgs_tagger_2024_v3_nonhiggs_wp \
+  --request-memory "8 GB" --merge-request-memory "24 GB" \
+  --job-flavour workday --merge-job-flavour tomorrow \
+  --submit
+~~~
 
 ## Outputs
 
@@ -613,7 +777,7 @@ LCG108
 cd /eos/user/h/hanw/ttHcc/tthcc_an
 
 python scripts/run_boosted_higgs_tagger_study.py \
-  --config config/samples_2024_add_nonttbarmatch_allmc.json \
+  --config config/boosted_higgs_tagger_study/samples_2024_add_nonttbarmatch_allmc.json \
   --plot-input /path/to/<study.outdir>/plot_input.npz \
   --plot-only
 ```
@@ -625,7 +789,7 @@ LCG108
 cd /eos/user/h/hanw/ttHcc/tthcc_an
 
 python scripts/run_boosted_higgs_tagger_study.py \
-  --config config/samples_2024_add_nonttbarmatch_allmc.json \
+  --config config/boosted_higgs_tagger_study/samples_2024_add_nonttbarmatch_allmc.json \
   --plot-input /path/to/<study.outdir>/plot_input.npz \
   --plot-only \
   --plot-title-size 11 \
@@ -647,7 +811,7 @@ LCG108
 cd /eos/user/h/hanw/ttHcc/tthcc_an
 
 python scripts/run_boosted_higgs_tagger_study.py \
-  --config config/samples_2024_add_nonttbarmatch_allmc.json \
+  --config config/boosted_higgs_tagger_study/samples_2024_add_nonttbarmatch_allmc.json \
   --merge-chunks 'condor/<tag>/chunk_outputs/chunk_*.npz' \
   --skip-plots
 ```
@@ -675,7 +839,7 @@ LCG108
 cd /eos/user/h/hanw/ttHcc/tthcc_an
 
 python scripts/run_boosted_higgs_tagger_study.py \
-  --config config/samples_2024_add_nonttbarmatch_allmc.json \
+  --config config/boosted_higgs_tagger_study/samples_2024_add_nonttbarmatch_allmc.json \
   --merge-chunks 'condor/<tag>/chunk_outputs/chunk_*.npz' \
   --plot-only \
   --outdir outputs/boosted_higgs_tagger_study_2024_replot
@@ -701,7 +865,7 @@ needs `--config` plus the batch-resource settings:
 
 ```bash
 python scripts/submit_boosted_higgs_tagger_condor.py \
-  --config config/samples_2024_add_nonttbarmatch_allmc.json \
+  --config config/boosted_higgs_tagger_study/samples_2024_add_nonttbarmatch_allmc.json \
   --files-per-chunk 60 \
   --request-memory "8 GB" \
   --merge-request-memory "24 GB" \
@@ -741,7 +905,7 @@ You can also forward extra study arguments after `--`, for example:
 
 ```bash
 python scripts/submit_boosted_higgs_tagger_condor.py \
-  --config config/samples_2024_add_nonttbarmatch_allmc.json \
+  --config config/boosted_higgs_tagger_study/samples_2024_add_nonttbarmatch_allmc.json \
   --files-per-chunk 60 \
   --request-memory "8 GB" \
   --merge-request-memory "24 GB" \
@@ -823,7 +987,7 @@ config file.
 ```bash
 LCG108
 python scripts/run_boosted_higgs_tagger_study.py \
-  --config config/samples_2024_add_nonttbarmatch_allmc.json \
+  --config config/boosted_higgs_tagger_study/samples_2024_add_nonttbarmatch_allmc.json \
   --scores gpart_h2cc gpart_h2bb gpart_higgs_vs_qcd \
   --chunk-payload-mode histogram \
   --export-chunk outputs/debug/chunk_0000.npz \
@@ -835,7 +999,7 @@ python scripts/run_boosted_higgs_tagger_study.py \
 ```bash
 LCG108
 python scripts/run_boosted_higgs_tagger_study.py \
-  --config config/samples_2024_add_nonttbarmatch_allmc.json \
+  --config config/boosted_higgs_tagger_study/samples_2024_add_nonttbarmatch_allmc.json \
   --scores gpart_h2cc gpart_h2bb gpart_higgs_vs_qcd \
   --merge-chunks 'outputs/debug/*.npz' \
   --outdir outputs/debug/final

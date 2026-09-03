@@ -7,8 +7,9 @@ from typing import Any
 import awkward as ak
 import numpy as np
 import uproot
+from tthcc_an.boosted_higgs_tagger_study.dataset import select_candidates as _select_candidates
 
-from tthcc_an.config_loader import (
+from tthcc_an.boosted_higgs_tagger_study.config import (
     DEFAULT_CANDIDATE_STRATEGY,
     DEFAULT_ETA_MAX,
     DEFAULT_MSD_WINDOW_HIGH,
@@ -30,7 +31,7 @@ from tthcc_an.config_loader import (
     load_study_config,
     resolve_output_dir,
 )
-from tthcc_an.definitions import (
+from tthcc_an.boosted_higgs_tagger_study.definitions import (
     COUNT_FIELDS,
     FATJET_FIELDS,
     FLOAT_FIELDS,
@@ -50,7 +51,7 @@ from tthcc_an.metrics import (
     compute_working_points_from_hist,
     safe_divide as _safe_divide,
 )
-from tthcc_an.payload_io import (
+from tthcc_an.boosted_higgs_tagger_study.cache import (
     HISTOGRAM_PAYLOAD_MODE,
     build_histogram_payload_from_raw_data,
     detect_payload_mode as _detect_payload_mode,
@@ -59,7 +60,7 @@ from tthcc_an.payload_io import (
     load_merged_chunk_payloads,
     load_merged_histogram_payloads,
 )
-from tthcc_an.plotting import (
+from tthcc_an.boosted_higgs_tagger_study.plotting import (
     build_plot_style,
     compute_fixed_other_efficiency_scan_from_hist_payload,
     compute_fixed_other_efficiency_scan_from_raw,
@@ -79,7 +80,28 @@ from tthcc_an.plotting import (
     plot_score_distribution_from_hist,
     plot_significance_scan,
 )
-from tthcc_an.reporting import (
+from tthcc_an.boosted_higgs_tagger_study.scans import (
+    build_hcc_wp_scan_aggregate,
+    candidate_selection_metadata,
+    normalize_hcc_wp_scan_config,
+)
+from tthcc_an.boosted_higgs_tagger_study.inclusive_higgs_wp import (
+    normalize_inclusive_higgs_wp_config,
+)
+from tthcc_an.boosted_higgs_tagger_study.y_split_study import (
+    normalize_y_split_config,
+    with_resolved_x_working_points,
+)
+from tthcc_an.boosted_higgs_tagger_study.workflow import (
+    maybe_write_hcc_wp_scan_from_histogram,
+    maybe_write_hcc_wp_scan_from_raw,
+    maybe_write_inclusive_higgs_wp_from_histogram,
+    maybe_write_inclusive_higgs_wp_from_raw,
+    maybe_write_y_split_from_histogram,
+    maybe_write_y_split_from_raw,
+)
+
+from tthcc_an.boosted_higgs_tagger_study.reporting import (
     format_contour_region_efficiency_text,
     format_fixed_other_efficiency_scan_text,
     format_fixed_x_ycut_scan_text,
@@ -89,11 +111,12 @@ from tthcc_an.reporting import (
 )
 
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = Path(__file__).resolve().parents[3]
 FLOAT_STORAGE_DTYPE = np.float32
 COUNT_STORAGE_DTYPE = np.int16
 WEIGHT_STORAGE_DTYPE = np.float32
 TRUTH_CODE_DTYPE = np.int8
+EVENT_INDEX_DTYPE = np.int64
 PROCESS_CODE_DTYPE = np.int16
 CANDIDATE_STRATEGIES = (
     "all_jets",
@@ -300,6 +323,20 @@ def apply_config_defaults_to_args(args: argparse.Namespace, study_config: StudyC
             DEFAULT_MSD_WINDOW_HIGH,
         )
     )
+    effective_args.msd_window_inclusive = bool(
+        study_config.study_defaults.get("msd_window_inclusive", True)
+    )
+    effective_args.hcc_wp_scan = normalize_hcc_wp_scan_config(
+        study_config.study_defaults.get("hcc_wp_scan")
+    )
+    effective_args.inclusive_higgs_wp = normalize_inclusive_higgs_wp_config(
+        study_config.study_defaults.get("inclusive_higgs_wp")
+    )
+    effective_args.y_split_study = with_resolved_x_working_points(
+        normalize_y_split_config(study_config.study_defaults.get("y_split_study")),
+        repo_root=REPO_ROOT,
+    )
+
     effective_args.weight_branch = str(
         _configured_value(
             args.weight_branch,
@@ -397,25 +434,10 @@ def _count_jets(jets: ak.Array) -> int:
     return int(ak.sum(ak.num(jets.pt)))
 
 
-def _select_candidates(jets: ak.Array, args: argparse.Namespace) -> ak.Array:
-    mask = (jets.pt >= args.pt_min) & (np.abs(jets.eta) <= args.eta_max)
-    jets = jets[mask]
 
-    if args.candidate_strategy in {"mass_window_all_jets", "mass_window_leading_pt"}:
-        msd_mask = (jets.msoftdrop >= args.msd_window_low) & (jets.msoftdrop <= args.msd_window_high)
-        jets = jets[msd_mask]
-
-    if args.candidate_strategy in {"all_jets", "mass_window_all_jets"}:
-        return jets
-
-    ordering = ak.argsort(jets.pt, axis=1, ascending=False)
-    jets = jets[ordering]
-    return ak.singletons(ak.firsts(jets))
-
-
-def _broadcast_event_weights(jets: ak.Array, event_weights: ak.Array) -> np.ndarray:
-    _, jet_event_weights = ak.broadcast_arrays(jets.pt, event_weights)
-    return np.asarray(ak.to_numpy(ak.flatten(jet_event_weights)), dtype=float)
+def _broadcast_event_values(jets: ak.Array, event_values: ak.Array, dtype: Any) -> np.ndarray:
+    _, jet_event_values = ak.broadcast_arrays(jets.pt, event_values)
+    return np.asarray(ak.to_numpy(ak.flatten(jet_event_values)), dtype=dtype)
 
 
 def _resolve_requested_scores(args: argparse.Namespace) -> list[str]:
@@ -431,6 +453,12 @@ def _required_fatjet_fields(args: argparse.Namespace) -> list[str]:
     required = {"pt", "eta"} | set(COUNT_FIELDS)
     if args.candidate_strategy in {"mass_window_all_jets", "mass_window_leading_pt"}:
         required.add("msoftdrop")
+    if (
+        args.hcc_wp_scan["enabled"]
+        or args.inclusive_higgs_wp["enabled"]
+        or args.y_split_study["enabled"]
+    ):
+        required.update({"globalParT3_Xbb", "globalParT3_Xcc", "globalParT3_QCD"})
     for score_name in _resolve_requested_scores(args):
         required.update(SCORE_INPUT_FIELDS.get(score_name, set()))
     return [field for field in FATJET_FIELDS if field in required]
@@ -459,12 +487,13 @@ def load_pepper_fatjets(
 ) -> tuple[dict[str, np.ndarray], list[dict[str, Any]]]:
     requested_fatjet_fields = _required_fatjet_fields(args)
     chunks: dict[str, list[np.ndarray]] = {field: [] for field in requested_fatjet_fields}
-    for key in ["weight", "weight_signed", "process_code"]:
+    for key in ["weight", "weight_signed", "process_code", "event_index"]:
         chunks[key] = []
     process_entries = _build_process_entries_from_samples(samples)
     process_to_code = {entry["process"]: int(entry["code"]) for entry in process_entries}
 
     sample_summaries: list[dict[str, Any]] = []
+    next_event_index = 0
 
     for sample in samples:
         total_events = 0
@@ -491,6 +520,10 @@ def load_pepper_fatjets(
                     weight_branch_found = True
 
                 for arrays in tree.iterate(requested, library="ak", step_size=args.uproot_step_size):
+                    event_indices = ak.Array(
+                        np.arange(next_event_index, next_event_index + len(arrays), dtype=EVENT_INDEX_DTYPE)
+                    )
+                    next_event_index += len(arrays)
                     jets = ak.zip(
                         {
                             field: arrays[f"FatJet_{field}"]
@@ -512,7 +545,7 @@ def load_pepper_fatjets(
                             chunks[field].append(_flatten_field(jets, field, n_selected, 0, COUNT_STORAGE_DTYPE))
 
                     if not args.disable_event_weights and args.weight_branch in arrays.fields:
-                        raw_event_weight = _broadcast_event_weights(jets, arrays[args.weight_branch])
+                        raw_event_weight = _broadcast_event_values(jets, arrays[args.weight_branch], float)
                     else:
                         raw_event_weight = np.ones(n_selected, dtype=float)
 
@@ -527,6 +560,9 @@ def load_pepper_fatjets(
                         np.full(n_selected, process_to_code[sample.process], dtype=PROCESS_CODE_DTYPE)
                     )
 
+                    chunks["event_index"].append(
+                        _broadcast_event_values(jets, event_indices, EVENT_INDEX_DTYPE)
+                    )
         sample_summaries.append(
             {
                 "name": sample.name,
@@ -556,6 +592,8 @@ def load_pepper_fatjets(
                 merged[key] = np.array([], dtype=WEIGHT_STORAGE_DTYPE)
             elif key == "process_code":
                 merged[key] = np.array([], dtype=PROCESS_CODE_DTYPE)
+            elif key == "event_index":
+                merged[key] = np.array([], dtype=EVENT_INDEX_DTYPE)
             elif key in COUNT_FIELDS:
                 merged[key] = np.array([], dtype=COUNT_STORAGE_DTYPE)
             else:
@@ -674,9 +712,10 @@ def resolve_weighting_info(args: argparse.Namespace) -> tuple[StudyConfig, argpa
         "lumi_fb": effective_lumi_fb,
         "gen_sumw_file": effective_gen_sumw_file,
         "xsec_file": effective_xsec_file,
-        "weight_branch": None if args.disable_event_weights else args.weight_branch,
+        "weight_branch": None if effective_args.disable_event_weights else effective_args.weight_branch,
         "analysis_weight_definition": "sample_norm * abs(event_weight_raw)",
         "signed_weight_definition": "sample_norm * event_weight_raw",
+        "candidate_selection": candidate_selection_metadata(effective_args),
     }
     return study_config, effective_args, weighting_info
 
@@ -692,6 +731,25 @@ def _select_scores_to_keep(args: argparse.Namespace, available_scores: list[str]
     return selected
 
 
+def _score_names_for_empty_study_data(args: argparse.Namespace) -> list[str]:
+    selected = list(dict.fromkeys(_resolve_requested_scores(args)))
+    for plot_def in _selected_contour_plot_defs(args):
+        for score_name in (str(plot_def["x_score"]), str(plot_def["y_score"])):
+            if score_name not in selected:
+                selected.append(score_name)
+    if args.hcc_wp_scan["enabled"]:
+        for score_name in ("gpart_higgs_vs_qcd", "gpart_xbb_vs_xcc"):
+            if score_name not in selected:
+                selected.append(score_name)
+    if args.inclusive_higgs_wp["enabled"] and "gpart_higgs_vs_qcd" not in selected:
+        selected.append("gpart_higgs_vs_qcd")
+    if args.y_split_study["enabled"]:
+        for score_name in ("gpart_higgs_vs_qcd", "gpart_xbb_vs_xcc"):
+            if score_name not in selected:
+                selected.append(score_name)
+    return selected
+
+
 def _build_slim_study_data(data: dict[str, np.ndarray], score_names: list[str]) -> dict[str, np.ndarray]:
     slim_data: dict[str, np.ndarray] = {
         "truth_code": np.asarray(data["truth_code"], dtype=TRUTH_CODE_DTYPE),
@@ -700,6 +758,8 @@ def _build_slim_study_data(data: dict[str, np.ndarray], score_names: list[str]) 
     }
     if "process_code" in data:
         slim_data["process_code"] = np.asarray(data["process_code"], dtype=PROCESS_CODE_DTYPE)
+    if "event_index" in data:
+        slim_data["event_index"] = np.asarray(data["event_index"], dtype=EVENT_INDEX_DTYPE)
     for score_name in score_names:
         slim_data[score_name] = np.asarray(data[score_name], dtype=FLOAT_STORAGE_DTYPE)
     return slim_data
@@ -718,6 +778,7 @@ def _build_empty_slim_study_data(
         slim_data["process_code"] = np.array([], dtype=PROCESS_CODE_DTYPE)
     for score_name in score_names:
         slim_data[score_name] = np.array([], dtype=FLOAT_STORAGE_DTYPE)
+    slim_data["event_index"] = np.array([], dtype=EVENT_INDEX_DTYPE)
     return slim_data
 
 
@@ -738,7 +799,7 @@ def prepare_study_data_from_root(args: argparse.Namespace) -> tuple[dict[str, np
     available_scores = get_available_scores(data)
     if data["truth_code"].size == 0:
         slim_data = _build_empty_slim_study_data(
-            score_names=_resolve_requested_scores(effective_args),
+            score_names=_score_names_for_empty_study_data(effective_args),
             include_process_code="process_code" in data,
         )
     else:
@@ -1228,6 +1289,36 @@ def finalize_study(
         plot_style,
         _selected_contour_plot_defs(effective_args),
     )
+    hcc_wp_scan = maybe_write_hcc_wp_scan_from_raw(
+        data,
+        sample_summaries,
+        effective_args=effective_args,
+        weighting_info=weighting_info,
+        outdirs=outdirs,
+        plot_style=plot_style,
+    )
+    if hcc_wp_scan is not None:
+        study_payload["hcc_wp_scan"] = hcc_wp_scan
+    inclusive_higgs_wp = maybe_write_inclusive_higgs_wp_from_raw(
+        data,
+        sample_summaries,
+        effective_args=effective_args,
+        weighting_info=weighting_info,
+        outdirs=outdirs,
+        plot_style=plot_style,
+    )
+    if inclusive_higgs_wp is not None:
+        study_payload["inclusive_higgs_wp"] = inclusive_higgs_wp
+    y_split = maybe_write_y_split_from_raw(
+        data,
+        sample_summaries,
+        effective_args=effective_args,
+        weighting_info=weighting_info,
+        outdirs=outdirs,
+        plot_style=plot_style,
+    )
+    if y_split is not None:
+        study_payload["y_split_study"] = y_split
 
     for target in effective_args.targets:
         resolved_scores = resolve_scores(effective_args.scores, target, available_scores)
@@ -1284,6 +1375,35 @@ def finalize_plots_only(
         _selected_contour_plot_defs(effective_args),
     )
     render_plots(data, effective_args, study_payload, outdirs)
+    hcc_wp_scan = maybe_write_hcc_wp_scan_from_raw(
+        data,
+        sample_summaries,
+        effective_args=effective_args,
+        weighting_info=weighting_info,
+        outdirs=outdirs,
+        plot_style=plot_style,
+    )
+    if hcc_wp_scan is not None:
+        study_payload["hcc_wp_scan"] = hcc_wp_scan
+    inclusive_higgs_wp = maybe_write_inclusive_higgs_wp_from_raw(
+        data,
+        sample_summaries,
+        effective_args=effective_args,
+        weighting_info=weighting_info,
+        outdirs=outdirs,
+        plot_style=plot_style,
+    )
+    if inclusive_higgs_wp is not None:
+        study_payload["inclusive_higgs_wp"] = inclusive_higgs_wp
+    y_split = maybe_write_y_split_from_raw(
+        data,
+        effective_args=effective_args,
+        weighting_info=weighting_info,
+        outdirs=outdirs,
+        plot_style=plot_style,
+    )
+    if y_split is not None:
+        study_payload["y_split_study"] = y_split
     write_json(outdirs["base"] / "plot_only_summary.json", study_payload)
     return study_payload
 
@@ -1315,6 +1435,33 @@ def finalize_histogram_study(
     )
 
     hist_edges = np.asarray(histogram_payload["hist_edges"], dtype=np.float64)
+    hcc_wp_scan = maybe_write_hcc_wp_scan_from_histogram(
+        histogram_payload,
+        effective_args=effective_args,
+        weighting_info=weighting_info,
+        outdirs=outdirs,
+        plot_style=plot_style,
+    )
+    if hcc_wp_scan is not None:
+        study_payload["hcc_wp_scan"] = hcc_wp_scan
+    inclusive_higgs_wp = maybe_write_inclusive_higgs_wp_from_histogram(
+        histogram_payload,
+        effective_args=effective_args,
+        weighting_info=weighting_info,
+        outdirs=outdirs,
+        plot_style=plot_style,
+    )
+    if inclusive_higgs_wp is not None:
+        study_payload["inclusive_higgs_wp"] = inclusive_higgs_wp
+    y_split = maybe_write_y_split_from_histogram(
+        histogram_payload,
+        effective_args=effective_args,
+        weighting_info=weighting_info,
+        outdirs=outdirs,
+        plot_style=plot_style,
+    )
+    if y_split is not None:
+        study_payload["y_split_study"] = y_split
     for target in effective_args.targets:
         resolved_scores = resolve_scores(effective_args.scores, target, available_scores)
         study_payload["targets"][target] = {}
@@ -1337,6 +1484,9 @@ def finalize_histogram_study(
     if not effective_args.skip_plots:
         render_histogram_plots(histogram_payload, effective_args, study_payload, outdirs)
 
+    seed_marker = outdirs["base"] / "SEED_FROM_V2_NPZ.txt"
+    if seed_marker.exists():
+        seed_marker.unlink()
     write_json(outdirs["base"] / "study_summary.json", study_payload)
     return study_payload
 
@@ -1366,6 +1516,33 @@ def finalize_histogram_plots_only(
         _selected_contour_plot_defs(effective_args),
     )
     render_histogram_plots(histogram_payload, effective_args, study_payload, outdirs)
+    hcc_wp_scan = maybe_write_hcc_wp_scan_from_histogram(
+        histogram_payload,
+        effective_args=effective_args,
+        weighting_info=weighting_info,
+        outdirs=outdirs,
+        plot_style=plot_style,
+    )
+    if hcc_wp_scan is not None:
+        study_payload["hcc_wp_scan"] = hcc_wp_scan
+    inclusive_higgs_wp = maybe_write_inclusive_higgs_wp_from_histogram(
+        histogram_payload,
+        effective_args=effective_args,
+        weighting_info=weighting_info,
+        outdirs=outdirs,
+        plot_style=plot_style,
+    )
+    if inclusive_higgs_wp is not None:
+        study_payload["inclusive_higgs_wp"] = inclusive_higgs_wp
+    y_split = maybe_write_y_split_from_histogram(
+        histogram_payload,
+        effective_args=effective_args,
+        weighting_info=weighting_info,
+        outdirs=outdirs,
+        plot_style=plot_style,
+    )
+    if y_split is not None:
+        study_payload["y_split_study"] = y_split
     write_json(outdirs["base"] / "plot_only_summary.json", study_payload)
     return study_payload
 
@@ -1375,7 +1552,7 @@ def run_export_chunk(args: argparse.Namespace) -> dict[str, Any]:
     chunk_path = Path(args.export_chunk).resolve()
     available_scores = get_available_scores(data)
     if data["truth_code"].size == 0:
-        selected_scores = _resolve_requested_scores(effective_args)
+        selected_scores = _score_names_for_empty_study_data(effective_args)
     else:
         selected_scores = _select_scores_to_keep(effective_args, available_scores)
     if args.chunk_payload_mode == "histogram":
@@ -1385,6 +1562,9 @@ def run_export_chunk(args: argparse.Namespace) -> dict[str, Any]:
             score_names=selected_scores,
             n_bins=effective_args.score_hist_bins,
             contour_plot_defs=_selected_contour_plot_defs(effective_args),
+            hcc_wp_scan_config=effective_args.hcc_wp_scan,
+            inclusive_higgs_wp_config=effective_args.inclusive_higgs_wp,
+            y_split_config=effective_args.y_split_study,
         )
         exported_scores = export_histogram_payload(
             outpath=chunk_path,
