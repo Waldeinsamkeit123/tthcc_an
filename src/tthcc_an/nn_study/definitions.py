@@ -44,3 +44,19 @@ def assign_truth_categories(
         )
     return truth_index
 
+
+def classify_truth_categories(
+    categories: list[NnTruthCategory],
+    columns: dict[str, np.ndarray],
+    size: int,
+) -> tuple[np.ndarray, np.ndarray, dict[str, np.ndarray]]:
+    """Classify with first-match precedence while retaining coverage diagnostics."""
+    truth_index = np.full(size, -1, dtype=np.int16)
+    assignment_count = np.zeros(size, dtype=np.int16)
+    masks: dict[str, np.ndarray] = {}
+    for index, category in enumerate(categories):
+        mask = evaluate_mask(category.expression, columns, size)
+        masks[category.name] = mask
+        truth_index[mask & (truth_index < 0)] = index
+        assignment_count += mask.astype(np.int16)
+    return truth_index, assignment_count, masks

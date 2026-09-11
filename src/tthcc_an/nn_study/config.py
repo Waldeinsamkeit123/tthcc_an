@@ -55,6 +55,7 @@ class NnMassScan:
     score_branch: str
     direction: str
     thresholds: list[float]
+    populations: list[str] | None = None
 
 
 @dataclass(frozen=True)
@@ -74,6 +75,7 @@ class NnMassSculptingConfig:
     populations: list[NnMassPopulation]
     variables: list[NnMassVariable]
     scans: list[NnMassScan]
+    summary_scans: list[NnMassScan]
 
 
 @dataclass(frozen=True)
@@ -95,11 +97,85 @@ class NnScoreSignificanceConfig:
 
 
 @dataclass(frozen=True)
+class NnScoreSignificance2DAxis:
+    score_name: str
+    score_branch: str
+    direction: str
+    thresholds: list[float]
+
+
+@dataclass(frozen=True)
+class NnScoreSignificance2DGroup:
+    name: str
+    label: str
+    truth_categories: list[str]
+
+
+@dataclass(frozen=True)
+class NnScoreSignificance2DThirdCut:
+    enabled: bool
+    score_name: str | None
+    score_branch: str | None
+    direction: str | None
+    thresholds: list[float]
+    base_points: list[tuple[float, float]]
+
+
+@dataclass(frozen=True)
+class NnScoreSignificance2DConfig:
+    enabled: bool
+    signals: list[str]
+    metric: str
+    x_axis: NnScoreSignificance2DAxis | None
+    y_axis: NnScoreSignificance2DAxis | None
+    groups: list[NnScoreSignificance2DGroup]
+    representative_points: list[tuple[float, float]]
+    plateau_fractions: list[float]
+    third_cut: NnScoreSignificance2DThirdCut
+
+
+@dataclass(frozen=True)
 class NnSignificanceMassWindowConfig:
     enabled: bool
     branch: str | None
     minimum: float | None
     maximum: float | None
+
+
+@dataclass(frozen=True)
+class NnAnalysisRegionCut:
+    score_name: str
+    score_branch: str
+    direction: str
+    threshold: float
+
+
+@dataclass(frozen=True)
+class NnConditionalQcdVetoConfig:
+    enabled: bool
+    tthz_score_name: str | None
+    tthz_score_branch: str | None
+    qcd_score_name: str | None
+    qcd_score_branch: str | None
+    tthz_thresholds: list[float]
+    qcd_thresholds: list[float]
+
+
+@dataclass(frozen=True)
+class NnArScorePlotRange:
+    score_name: str
+    score_branch: str
+    minimum: float
+    maximum: float
+    bins: int
+
+
+@dataclass(frozen=True)
+class NnAnalysisRegionsConfig:
+    enabled: bool
+    ar_cuts: list[NnAnalysisRegionCut]
+    ar_score_plot_ranges: dict[str, NnArScorePlotRange]
+    conditional_qcd_veto: NnConditionalQcdVetoConfig
 
 
 @dataclass(frozen=True)
@@ -120,12 +196,14 @@ class NnQcdScoreScanConfig:
     scan_min: float
     scan_max: float
     scan_points: int
+    scan_scale: str
     distribution_bins: int
     distribution_log10_range: tuple[float, float]
     groups: list[NnQcdScoreGroup]
     working_point_bins: int
     working_point_score_range: tuple[float, float]
-    reference_threshold: float
+    reference_threshold: float | None
+    working_point_scale: str
     distribution_groups: list[NnQcdScoreGroup]
     significance_enabled: bool
     significance_signals: list[str]
@@ -159,7 +237,10 @@ class NnStudyConfig:
     flatten_first_branches: list[str]
     scores: list[NnScoreClass]
     auxiliary_scores: list[NnScoreClass]
+    analysis_discriminants: list[str]
     truth_categories: list[NnTruthCategory]
+    prediction_truth_categories: list[NnTruthCategory]
+    diagnostic_truth_categories: list[NnTruthCategory]
     samples: list[NnSample]
     gen_sumw_file: str
     xsec_file: str
@@ -169,7 +250,10 @@ class NnStudyConfig:
     plot_options: dict[str, Any]
     mass_sculpting: NnMassSculptingConfig
     score_significance: NnScoreSignificanceConfig
+    score_significance_2d: NnScoreSignificance2DConfig
+    score_significance_2d_hierarchical: NnScoreSignificance2DConfig
     significance_mass_window: NnSignificanceMassWindowConfig
+    analysis_regions: NnAnalysisRegionsConfig
     qcd_score_scan: NnQcdScoreScanConfig
     weighting_diagnostics: NnWeightingDiagnosticsConfig
     validate_auc_with_sklearn: bool
@@ -197,6 +281,14 @@ class NnStudyConfig:
         return [truth.name for truth in self.truth_categories]
 
     @property
+    def prediction_truth_names(self) -> list[str]:
+        return [truth.name for truth in self.prediction_truth_categories]
+
+    @property
+    def uses_distinct_prediction_truth(self) -> bool:
+        return self.prediction_truth_categories != self.truth_categories
+
+    @property
     def requested_branches(self) -> list[str]:
         return self.requested_branches_for(
             score_names=self.all_score_names,
@@ -221,6 +313,10 @@ class NnStudyConfig:
         for sample in self.samples:
             branches.update(_expression_branch_names(sample.selection))
         for truth in self.truth_categories:
+            branches.update(_expression_branch_names(truth.expression))
+        for truth in self.prediction_truth_categories:
+            branches.update(_expression_branch_names(truth.expression))
+        for truth in self.diagnostic_truth_categories:
             branches.update(_expression_branch_names(truth.expression))
         branches.add(self.weight_branch)
         return sorted(branches)
@@ -377,39 +473,66 @@ def _load_mass_sculpting(
     for score in scores:
         score_by_reference[score.name] = score
         score_by_reference[score.branch] = score
-    scans: list[NnMassScan] = []
-    for entry in list(mass_payload.get("scans", [])):
-        reference = str(entry["score"])
-        if reference not in score_by_reference:
-            raise ValueError(f"Unknown mass-sculpting score '{reference}'.")
-        score = score_by_reference[reference]
-        direction = str(entry["direction"])
-        if direction not in {">", ">=", "<", "<="}:
-            raise ValueError("Mass-sculpting direction must be one of >, >=, <, <=.")
-        thresholds = [float(value) for value in list(entry.get("thresholds", []))]
-        if not thresholds:
-            raise ValueError(f"Mass-sculpting scan '{reference}' has no thresholds.")
-        if thresholds != sorted(thresholds):
-            raise ValueError(f"Mass-sculpting thresholds for '{reference}' must be ascending.")
-        scans.append(
-            NnMassScan(
-                score_name=score.name,
-                score_branch=score.branch,
-                direction=direction,
-                thresholds=thresholds,
+    population_names = {population.name for population in populations}
+
+    def load_scans(key: str) -> list[NnMassScan]:
+        scans: list[NnMassScan] = []
+        for entry in list(mass_payload.get(key, [])):
+            reference = str(entry["score"])
+            if reference not in score_by_reference:
+                raise ValueError(f"Unknown mass-sculpting score '{reference}'.")
+            score = score_by_reference[reference]
+            direction = str(entry["direction"])
+            if direction not in {">", ">=", "<", "<="}:
+                raise ValueError(
+                    "Mass-sculpting direction must be one of >, >=, <, <=."
+                )
+            thresholds = [float(value) for value in list(entry.get("thresholds", []))]
+            if not thresholds:
+                raise ValueError(f"Mass-sculpting scan '{reference}' has no thresholds.")
+            if thresholds != sorted(thresholds):
+                raise ValueError(
+                    f"Mass-sculpting thresholds for '{reference}' must be ascending."
+                )
+            raw_scan_populations = entry.get("populations", "all")
+            scan_populations = (
+                None
+                if raw_scan_populations == "all"
+                else [str(name) for name in list(raw_scan_populations)]
             )
-        )
+            unknown_populations = sorted(
+                set(scan_populations or []) - population_names
+            )
+            if unknown_populations:
+                raise ValueError(
+                    "Unknown mass-sculpting scan populations: "
+                    + ", ".join(unknown_populations)
+                )
+            scans.append(
+                NnMassScan(
+                    score_name=score.name,
+                    score_branch=score.branch,
+                    direction=direction,
+                    thresholds=thresholds,
+                    populations=scan_populations,
+                )
+            )
+        return scans
+
+    scans = load_scans("scans")
+    summary_scans = load_scans("summary_scans")
 
     enabled = bool(mass_payload.get("enabled", False))
-    if enabled and (not populations or not variables or not scans):
+    if enabled and (not populations or not variables):
         raise ValueError(
-            "Enabled mass_sculpting requires non-empty populations, variables, and scans."
+            "Enabled mass_sculpting requires non-empty populations and variables."
         )
     return NnMassSculptingConfig(
         enabled=enabled,
         populations=populations,
         variables=variables,
         scans=scans,
+        summary_scans=summary_scans,
     )
 
 
@@ -487,6 +610,224 @@ def _load_score_significance(
     )
 
 
+def _load_score_significance_2d(
+    payload: dict[str, Any],
+    scores: list[NnScoreClass],
+    truths: list[NnTruthCategory],
+    *,
+    config_key: str = "score_significance_2d",
+) -> NnScoreSignificance2DConfig:
+    scan_payload = dict(payload.get(config_key, {}))
+    enabled = bool(scan_payload.get("enabled", False))
+    metric = str(scan_payload.get("metric", "s_over_sqrt_s_plus_b"))
+    if metric != "s_over_sqrt_s_plus_b":
+        raise ValueError(
+            "score_significance_2d.metric must be 's_over_sqrt_s_plus_b'."
+        )
+
+    score_by_reference: dict[str, NnScoreClass] = {}
+    for score in scores:
+        score_by_reference[score.name] = score
+        score_by_reference[score.branch] = score
+
+    def load_axis(key: str) -> NnScoreSignificance2DAxis | None:
+        raw_axis = scan_payload.get(key)
+        if raw_axis is None:
+            return None
+        axis_payload = dict(raw_axis)
+        reference = str(axis_payload["score"])
+        if reference not in score_by_reference:
+            raise ValueError(
+                f"Unknown score-significance-2d {key} score '{reference}'."
+            )
+        score = score_by_reference[reference]
+        direction = str(axis_payload["direction"])
+        if direction not in {"<", ">"}:
+            raise ValueError(
+                f"score_significance_2d.{key}.direction must be '<' or '>'."
+            )
+        thresholds = [
+            float(value) for value in list(axis_payload.get("thresholds", []))
+        ]
+        if (
+            not thresholds
+            or thresholds != sorted(thresholds)
+            or len(thresholds) != len(set(thresholds))
+            or not all(isfinite(value) for value in thresholds)
+        ):
+            raise ValueError(
+                f"score_significance_2d.{key}.thresholds must be non-empty, "
+                "finite, unique, and ascending."
+            )
+        return NnScoreSignificance2DAxis(
+            score_name=score.name,
+            score_branch=score.branch,
+            direction=direction,
+            thresholds=thresholds,
+        )
+
+    x_axis = load_axis("x")
+    y_axis = load_axis("y")
+    truth_names = {truth.name for truth in truths}
+    signals = [str(name) for name in list(scan_payload.get("signals", []))]
+    unknown_signals = sorted(set(signals) - truth_names)
+    if unknown_signals:
+        raise ValueError(
+            "Unknown score-significance-2d signals: " + ", ".join(unknown_signals)
+        )
+    if len(signals) != len(set(signals)):
+        raise ValueError("score_significance_2d signals must be unique.")
+
+    groups: list[NnScoreSignificance2DGroup] = []
+    for entry in list(scan_payload.get("groups", [])):
+        categories = [str(name) for name in list(entry.get("truth_categories", []))]
+        unknown_categories = sorted(set(categories) - truth_names)
+        if unknown_categories:
+            raise ValueError(
+                "Unknown score-significance-2d group truth categories: "
+                + ", ".join(unknown_categories)
+            )
+        if not categories:
+            raise ValueError(
+                "Each score_significance_2d group requires truth_categories."
+            )
+        groups.append(
+            NnScoreSignificance2DGroup(
+                name=str(entry["name"]),
+                label=str(entry.get("label", entry["name"])),
+                truth_categories=categories,
+            )
+        )
+    _unique_names([group.name for group in groups], "score-significance-2d group")
+
+    def load_points(raw_points: list[Any], key: str) -> list[tuple[float, float]]:
+        points: list[tuple[float, float]] = []
+        for raw_point in raw_points:
+            if isinstance(raw_point, dict):
+                point = (float(raw_point["x"]), float(raw_point["y"]))
+            else:
+                values = [float(value) for value in list(raw_point)]
+                if len(values) != 2:
+                    raise ValueError(
+                        f"Each score_significance_2d.{key} entry needs x and y."
+                    )
+                point = (values[0], values[1])
+            if point in points:
+                raise ValueError(
+                    f"score_significance_2d.{key} points must be unique."
+                )
+            points.append(point)
+        return points
+
+    representative_points = load_points(
+        list(scan_payload.get("representative_points", [])),
+        "representative_points",
+    )
+    plateau_fractions = [
+        float(value)
+        for value in list(scan_payload.get("plateau_fractions", [0.95, 0.98]))
+    ]
+    if (
+        plateau_fractions != sorted(plateau_fractions)
+        or len(plateau_fractions) != len(set(plateau_fractions))
+        or any(not 0.0 < value <= 1.0 for value in plateau_fractions)
+    ):
+        raise ValueError(
+            "score_significance_2d.plateau_fractions must be unique, ascending, "
+            "and in (0, 1]."
+        )
+
+    third_payload = dict(scan_payload.get("third_score_diagnostic", {}))
+    third_enabled = bool(third_payload.get("enabled", False))
+    third_reference = third_payload.get("score")
+    if third_reference is None:
+        third_score = None
+    elif str(third_reference) not in score_by_reference:
+        raise ValueError(
+            f"Unknown third-score diagnostic score '{third_reference}'."
+        )
+    else:
+        third_score = score_by_reference[str(third_reference)]
+    third_direction = (
+        None
+        if third_payload.get("direction") is None
+        else str(third_payload["direction"])
+    )
+    if third_direction is not None and third_direction not in {"<", ">"}:
+        raise ValueError(
+            "score_significance_2d.third_score_diagnostic.direction must be '<' or '>'."
+        )
+    third_thresholds = [
+        float(value) for value in list(third_payload.get("thresholds", []))
+    ]
+    if (
+        third_thresholds != sorted(third_thresholds)
+        or len(third_thresholds) != len(set(third_thresholds))
+        or not all(isfinite(value) for value in third_thresholds)
+    ):
+        raise ValueError(
+            "Third-score thresholds must be finite, unique, and ascending."
+        )
+    third_base_points = load_points(
+        list(third_payload.get("base_points", representative_points)),
+        "third_score_diagnostic.base_points",
+    )
+    third_cut = NnScoreSignificance2DThirdCut(
+        enabled=third_enabled,
+        score_name=None if third_score is None else third_score.name,
+        score_branch=None if third_score is None else third_score.branch,
+        direction=third_direction,
+        thresholds=third_thresholds,
+        base_points=third_base_points,
+    )
+
+    if enabled:
+        if x_axis is None or y_axis is None or not signals or not groups:
+            raise ValueError(
+                "Enabled score_significance_2d requires x/y axes, signals, and groups."
+            )
+        missing_signal_groups = sorted(
+            set(signals) - {group.name for group in groups}
+        )
+        if missing_signal_groups:
+            raise ValueError(
+                "score_significance_2d requires a matching efficiency group for "
+                "each signal: " + ", ".join(missing_signal_groups)
+            )
+        for key, points in (
+            ("representative_points", representative_points),
+            ("third_score_diagnostic.base_points", third_base_points),
+        ):
+            for x_value, y_value in points:
+                if x_value not in x_axis.thresholds or y_value not in y_axis.thresholds:
+                    raise ValueError(
+                        f"score_significance_2d.{key} point "
+                        f"({x_value:g}, {y_value:g}) is not on the configured grid."
+                    )
+        if third_enabled and (
+            third_score is None
+            or third_direction is None
+            or not third_thresholds
+            or not third_base_points
+        ):
+            raise ValueError(
+                "Enabled third-score diagnostic requires score, direction, "
+                "thresholds, and base_points."
+            )
+
+    return NnScoreSignificance2DConfig(
+        enabled=enabled,
+        signals=signals,
+        metric=metric,
+        x_axis=x_axis,
+        y_axis=y_axis,
+        groups=groups,
+        representative_points=representative_points,
+        plateau_fractions=plateau_fractions,
+        third_cut=third_cut,
+    )
+
+
 def _load_significance_mass_window(
     payload: dict[str, Any],
 ) -> NnSignificanceMassWindowConfig:
@@ -522,6 +863,129 @@ def _load_significance_mass_window(
     )
 
 
+def _load_analysis_regions(
+    payload: dict[str, Any], scores: list[NnScoreClass]
+) -> NnAnalysisRegionsConfig:
+    region_payload = dict(payload.get("analysis_regions", {}))
+    enabled = bool(region_payload.get("enabled", False))
+    score_by_reference: dict[str, NnScoreClass] = {}
+    for score in scores:
+        score_by_reference[score.name] = score
+        score_by_reference[score.branch] = score
+
+    ar_payload = dict(region_payload.get("ar", {}))
+    ar_cuts: list[NnAnalysisRegionCut] = []
+    for entry in list(ar_payload.get("cuts", [])):
+        reference = str(entry["score"])
+        if reference not in score_by_reference:
+            raise ValueError(f"Unknown analysis-region score '{reference}'.")
+        direction = str(entry["direction"])
+        if direction not in {"<", "<=", ">", ">="}:
+            raise ValueError(
+                "Analysis-region direction must be one of <, <=, >, >=."
+            )
+        threshold = float(entry["threshold"])
+        if not isfinite(threshold):
+            raise ValueError("Analysis-region thresholds must be finite.")
+        score = score_by_reference[reference]
+        ar_cuts.append(
+            NnAnalysisRegionCut(
+                score_name=score.name,
+                score_branch=score.branch,
+                direction=direction,
+                threshold=threshold,
+            )
+        )
+    _unique_names([cut.score_name for cut in ar_cuts], "analysis-region cut score")
+    if enabled and not ar_cuts:
+        raise ValueError("Enabled analysis_regions requires non-empty ar.cuts.")
+
+    ar_score_plot_ranges: dict[str, NnArScorePlotRange] = {}
+    for reference, entry in dict(ar_payload.get("score_plot_ranges", {})).items():
+        if reference not in score_by_reference:
+            raise ValueError(f"Unknown AR score plot range '{reference}'.")
+        minimum = float(entry["min"])
+        maximum = float(entry["max"])
+        bins = int(entry["bins"])
+        if not (isfinite(minimum) and isfinite(maximum) and minimum < maximum):
+            raise ValueError(
+                f"AR score plot range '{reference}' requires finite min < max."
+            )
+        if bins <= 0:
+            raise ValueError(f"AR score plot range '{reference}' requires bins > 0.")
+        score = score_by_reference[reference]
+        if score.name in ar_score_plot_ranges:
+            raise ValueError(f"Duplicate AR score plot range for '{score.name}'.")
+        ar_score_plot_ranges[score.name] = NnArScorePlotRange(
+            score_name=score.name,
+            score_branch=score.branch,
+            minimum=minimum,
+            maximum=maximum,
+            bins=bins,
+        )
+
+    conditional_payload = dict(region_payload.get("conditional_qcd_veto", {}))
+    conditional_enabled = bool(conditional_payload.get("enabled", False))
+
+    def resolve_conditional_score(key: str) -> NnScoreClass | None:
+        reference = conditional_payload.get(key)
+        if reference is None:
+            return None
+        reference = str(reference)
+        if reference not in score_by_reference:
+            raise ValueError(
+                f"Unknown conditional-QCD score '{reference}' for '{key}'."
+            )
+        return score_by_reference[reference]
+
+    tthz_score = resolve_conditional_score("tthz_score")
+    qcd_score = resolve_conditional_score("qcd_score")
+    tthz_thresholds = [
+        float(value)
+        for value in list(conditional_payload.get("tthz_thresholds", []))
+    ]
+    qcd_thresholds = [
+        float(value)
+        for value in list(conditional_payload.get("qcd_thresholds", []))
+    ]
+    for name, values in (
+        ("tthz_thresholds", tthz_thresholds),
+        ("qcd_thresholds", qcd_thresholds),
+    ):
+        if (
+            values != sorted(values)
+            or len(values) != len(set(values))
+            or not all(isfinite(value) for value in values)
+        ):
+            raise ValueError(
+                f"analysis_regions.conditional_qcd_veto.{name} must be finite, "
+                "unique, and ascending."
+            )
+    if conditional_enabled and (
+        tthz_score is None
+        or qcd_score is None
+        or not tthz_thresholds
+        or not qcd_thresholds
+    ):
+        raise ValueError(
+            "Enabled conditional_qcd_veto requires tthz/qcd scores and thresholds."
+        )
+    return NnAnalysisRegionsConfig(
+        enabled=enabled,
+        ar_cuts=ar_cuts,
+        ar_score_plot_ranges=ar_score_plot_ranges,
+        conditional_qcd_veto=NnConditionalQcdVetoConfig(
+            enabled=conditional_enabled,
+            tthz_score_name=None if tthz_score is None else tthz_score.name,
+            tthz_score_branch=None if tthz_score is None else tthz_score.branch,
+            qcd_score_name=None if qcd_score is None else qcd_score.name,
+            qcd_score_branch=None if qcd_score is None else qcd_score.branch,
+            tthz_thresholds=tthz_thresholds,
+            qcd_thresholds=qcd_thresholds,
+        ),
+    )
+
+
 def _load_qcd_score_scan(
     payload: dict[str, Any],
     scores: list[NnScoreClass],
@@ -547,20 +1011,22 @@ def _load_qcd_score_scan(
     candidate_thresholds = [
         float(value) for value in list(scan_payload.get("candidate_thresholds", []))
     ]
-    if enabled and not candidate_thresholds:
-        raise ValueError("Enabled qcd_score_scan requires candidate_thresholds.")
     if candidate_thresholds != sorted(candidate_thresholds):
         raise ValueError("QCD-score candidate thresholds must be ascending.")
     if len(candidate_thresholds) != len(set(candidate_thresholds)):
         raise ValueError("QCD-score candidate thresholds must be unique.")
-    if any(value <= 0.0 for value in candidate_thresholds):
-        raise ValueError("QCD-score candidate thresholds must be positive.")
-
     scan_min = float(scan_payload.get("scan_min", 1e-6))
     scan_max = float(scan_payload.get("scan_max", 1.0))
     scan_points = int(scan_payload.get("scan_points", 100))
-    if scan_min <= 0.0 or scan_max <= scan_min:
-        raise ValueError("QCD-score scan requires 0 < scan_min < scan_max.")
+    scan_scale = str(scan_payload.get("scan_scale", "log"))
+    if scan_scale not in {"linear", "log"}:
+        raise ValueError("QCD-score scan_scale must be 'linear' or 'log'.")
+    if scan_max <= scan_min or (scan_scale == "log" and scan_min <= 0.0):
+        raise ValueError(
+            "QCD-score scan requires scan_min < scan_max and a positive log minimum."
+        )
+    if scan_scale == "log" and any(value <= 0.0 for value in candidate_thresholds):
+        raise ValueError("Log-scale QCD-score candidate thresholds must be positive.")
     if scan_points < 2:
         raise ValueError("QCD-score scan_points must be at least 2.")
     if any(value < scan_min or value > scan_max for value in candidate_thresholds):
@@ -614,16 +1080,24 @@ def _load_qcd_score_scan(
     ]
     if working_point_bins <= 0:
         raise ValueError("QCD working-point distribution bins must be positive.")
+    working_point_scale = str(scan_payload.get("working_point_scale", "log"))
+    if working_point_scale not in {"linear", "log"}:
+        raise ValueError("QCD working_point_scale must be 'linear' or 'log'.")
     if (
         len(raw_score_range) != 2
-        or raw_score_range[0] <= 0.0
         or raw_score_range[0] >= raw_score_range[1]
+        or (working_point_scale == "log" and raw_score_range[0] <= 0.0)
     ):
         raise ValueError(
-            "QCD working-point score range must contain two ascending positive values."
+            "QCD working-point score range must be ascending and positive for log scale."
         )
-    reference_threshold = float(scan_payload.get("reference_threshold", 0.001))
-    if not raw_score_range[0] < reference_threshold < raw_score_range[1]:
+    raw_reference_threshold = scan_payload.get("reference_threshold", 0.001)
+    reference_threshold = (
+        None if raw_reference_threshold is None else float(raw_reference_threshold)
+    )
+    if reference_threshold is not None and not (
+        raw_score_range[0] < reference_threshold < raw_score_range[1]
+    ):
         raise ValueError(
             "QCD reference_threshold must lie strictly inside the working-point score range."
         )
@@ -705,12 +1179,14 @@ def _load_qcd_score_scan(
         scan_min=scan_min,
         scan_max=scan_max,
         scan_points=scan_points,
+        scan_scale=scan_scale,
         distribution_bins=distribution_bins,
         distribution_log10_range=(raw_log_range[0], raw_log_range[1]),
         groups=groups,
         working_point_bins=working_point_bins,
         working_point_score_range=(raw_score_range[0], raw_score_range[1]),
         reference_threshold=reference_threshold,
+        working_point_scale=working_point_scale,
         distribution_groups=distribution_groups,
         significance_enabled=significance_enabled,
         significance_signals=significance_signals,
@@ -830,6 +1306,29 @@ def load_nn_study_config(
         )
         for entry in list(payload.get("truth_categories", []))
     ]
+    raw_prediction_truths = payload.get("prediction_truth_categories")
+    prediction_truths = (
+        truths
+        if raw_prediction_truths is None
+        else [
+            NnTruthCategory(
+                name=str(entry["name"]),
+                label=str(entry.get("label", entry["name"])),
+                expression=str(entry["expression"]),
+                color=str(entry["color"]) if entry.get("color") else None,
+            )
+            for entry in list(raw_prediction_truths)
+        ]
+    )
+    diagnostic_truths = [
+        NnTruthCategory(
+            name=str(entry["name"]),
+            label=str(entry.get("label", entry["name"])),
+            expression=str(entry["expression"]),
+            color=str(entry["color"]) if entry.get("color") else None,
+        )
+        for entry in list(payload.get("diagnostic_truth_categories", []))
+    ]
     if not scores:
         raise ValueError("Config field 'scores' must be a non-empty list.")
     if not truths:
@@ -837,9 +1336,29 @@ def load_nn_study_config(
     all_scores = [*scores, *auxiliary_scores]
     _unique_names([item.name for item in all_scores], "score")
     _unique_names([item.branch for item in all_scores], "score branch")
+    analysis_discriminants = [
+        str(name) for name in list(payload.get("analysis_discriminants", []))
+    ]
+    unknown_discriminants = sorted(
+        set(analysis_discriminants) - {score.name for score in all_scores}
+    )
+    if unknown_discriminants:
+        raise ValueError(
+            "Unknown analysis discriminants: " + ", ".join(unknown_discriminants)
+        )
+    _unique_names(analysis_discriminants, "analysis discriminant")
     _unique_names([item.name for item in truths], "truth category")
-    if [item.name for item in scores] != [item.name for item in truths]:
-        raise ValueError("Score classes and truth categories must use the same names in the same order.")
+    _unique_names(
+        [item.name for item in prediction_truths], "prediction truth category"
+    )
+    _unique_names(
+        [item.name for item in diagnostic_truths], "diagnostic truth category"
+    )
+    if [item.name for item in scores] != [item.name for item in prediction_truths]:
+        raise ValueError(
+            "Score classes and prediction truth categories must use the same names "
+            "in the same order."
+        )
     input_location = str(study.get("input_location", ""))
     raw_sample_file_pattern = study.get("sample_file_pattern")
     sample_file_pattern = (
@@ -888,7 +1407,17 @@ def load_nn_study_config(
     _unique_names([sample.name for sample in samples], "sample")
     mass_sculpting = _load_mass_sculpting(payload, all_scores, truths, samples)
     score_significance = _load_score_significance(payload, all_scores, truths)
+    score_significance_2d = _load_score_significance_2d(
+        payload, all_scores, truths
+    )
+    score_significance_2d_hierarchical = _load_score_significance_2d(
+        payload,
+        all_scores,
+        truths,
+        config_key="score_significance_2d_hierarchical",
+    )
     significance_mass_window = _load_significance_mass_window(payload)
+    analysis_regions = _load_analysis_regions(payload, all_scores)
     qcd_score_scan = _load_qcd_score_scan(payload, all_scores, truths)
     weighting_diagnostics = _load_weighting_diagnostics(payload, scores)
 
@@ -923,7 +1452,10 @@ def load_nn_study_config(
         ],
         scores=scores,
         auxiliary_scores=auxiliary_scores,
+        analysis_discriminants=analysis_discriminants,
         truth_categories=truths,
+        prediction_truth_categories=prediction_truths,
+        diagnostic_truth_categories=diagnostic_truths,
         samples=samples,
         gen_sumw_file=str(_resolve_path(str(gen_sumw_file), config_path.parent)),
         xsec_file=str(_resolve_path(str(xsec_file), config_path.parent)),
@@ -933,7 +1465,10 @@ def load_nn_study_config(
         plot_options=dict(payload.get("plot", {})),
         mass_sculpting=mass_sculpting,
         score_significance=score_significance,
+        score_significance_2d=score_significance_2d,
+        score_significance_2d_hierarchical=score_significance_2d_hierarchical,
         significance_mass_window=significance_mass_window,
+        analysis_regions=analysis_regions,
         qcd_score_scan=qcd_score_scan,
         weighting_diagnostics=weighting_diagnostics,
         validate_auc_with_sklearn=bool(study.get("validate_auc_with_sklearn", True)),

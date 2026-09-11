@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -10,13 +11,17 @@ import uproot
 
 from tthcc_an.config_loader import load_json_maybe_with_comments
 from tthcc_an.nn_study.config import NnSample, NnStudyConfig
-from tthcc_an.nn_study.definitions import assign_truth_categories, evaluate_mask
+from tthcc_an.nn_study.definitions import classify_truth_categories, evaluate_mask
 
 
 @dataclass(frozen=True)
 class NnDataset:
     scores: dict[str, np.ndarray]
     truth_index: np.ndarray
+    prediction_truth_index: np.ndarray
+    truth_match_count: np.ndarray
+    prediction_truth_match_count: np.ndarray
+    diagnostic_truth_masks: dict[str, np.ndarray]
     sample_index: np.ndarray
     raw_weight: np.ndarray
     analysis_weight: np.ndarray
@@ -80,6 +85,13 @@ def _empty_dataset(
     return NnDataset(
         scores={name: np.array([], dtype=np.float64) for name in score_names},
         truth_index=np.array([], dtype=np.int16),
+        prediction_truth_index=np.array([], dtype=np.int16),
+        truth_match_count=np.array([], dtype=np.int16),
+        prediction_truth_match_count=np.array([], dtype=np.int16),
+        diagnostic_truth_masks={
+            truth.name: np.array([], dtype=bool)
+            for truth in config.diagnostic_truth_categories
+        },
         sample_index=np.array([], dtype=np.int16),
         raw_weight=np.array([], dtype=np.float64),
         analysis_weight=np.array([], dtype=np.float64),
@@ -97,8 +109,37 @@ def _empty_dataset(
             "events_selected": 0,
             "events_classified": 0,
             "events_unclassified": 0,
+            "fine_events_classified": 0,
+            "fine_events_unclassified": 0,
+            "fine_events_multiply_assigned": 0,
+            "coarse_events_classified": 0,
+            "coarse_events_unclassified": 0,
+            "coarse_events_multiply_assigned": 0,
         },
     )
+
+
+def _update_unclassified_diagnostics(
+    counter: Counter[tuple[Any, ...]],
+    columns: dict[str, np.ndarray],
+    mask: np.ndarray,
+    branches: list[str],
+) -> None:
+    indices = np.flatnonzero(mask)
+    for index in indices:
+        counter[tuple(np.asarray(columns[name])[index].item() for name in branches)] += 1
+
+
+def _format_unclassified_diagnostics(
+    counter: Counter[tuple[Any, ...]], branches: list[str]
+) -> list[dict[str, Any]]:
+    return [
+        {
+            "count": count,
+            "truth_variables": dict(zip(branches, values)),
+        }
+        for values, count in counter.most_common(20)
+    ]
 
 
 def load_nn_dataset(
@@ -130,6 +171,12 @@ def load_nn_dataset(
         name: [] for name in loaded_score_names
     }
     truth_buffers: list[np.ndarray] = []
+    prediction_truth_buffers: list[np.ndarray] = []
+    truth_match_count_buffers: list[np.ndarray] = []
+    prediction_truth_match_count_buffers: list[np.ndarray] = []
+    diagnostic_truth_buffers: dict[str, list[np.ndarray]] = {
+        truth.name: [] for truth in config.diagnostic_truth_categories
+    }
     sample_index_buffers: list[np.ndarray] = []
     raw_weight_buffers: list[np.ndarray] = []
     analysis_weight_buffers: list[np.ndarray] = []
@@ -159,12 +206,20 @@ def load_nn_dataset(
             "events_selected": 0,
             "events_classified": 0,
             "events_unclassified": 0,
+            "fine_events_classified": 0,
+            "fine_events_unclassified": 0,
+            "fine_events_multiply_assigned": 0,
+            "coarse_events_classified": 0,
+            "coarse_events_unclassified": 0,
+            "coarse_events_multiply_assigned": 0,
             "sample_norm": float(sample_norm),
             "gen_sumw": float(gen_sumw),
             "xsec_fb": float(xsec_fb),
             "analysis_weight_sum": 0.0,
             "signed_weight_sum": 0.0,
         }
+        fine_unclassified: Counter[tuple[Any, ...]] = Counter()
+        coarse_unclassified: Counter[tuple[Any, ...]] = Counter()
         print(
             f"[{sample_number}/{len(config.samples)}] {sample.name}: "
             f"{len(sample.files)} files discovered",
@@ -203,12 +258,51 @@ def load_nn_dataset(
                         continue
                     selected_columns = {name: values[mask] for name, values in columns.items()}
                     selected = int(np.sum(mask))
-                    truth_index = assign_truth_categories(
+                    truth_index, truth_match_count, _ = classify_truth_categories(
                         config.truth_categories, selected_columns, selected
                     )
+                    if config.uses_distinct_prediction_truth:
+                        (
+                            prediction_truth_index,
+                            prediction_truth_match_count,
+                            _,
+                        ) = classify_truth_categories(
+                            config.prediction_truth_categories,
+                            selected_columns,
+                            selected,
+                        )
+                    else:
+                        prediction_truth_index = truth_index.copy()
+                        prediction_truth_match_count = truth_match_count.copy()
+                    diagnostic_masks: dict[str, np.ndarray] = {}
+                    if config.diagnostic_truth_categories:
+                        _, _, diagnostic_masks = classify_truth_categories(
+                            config.diagnostic_truth_categories,
+                            selected_columns,
+                            selected,
+                        )
                     classified = truth_index >= 0
                     n_classified = int(np.sum(classified))
                     n_unclassified = selected - n_classified
+                    n_multiply_assigned = int(np.sum(truth_match_count > 1))
+                    coarse_classified = prediction_truth_index >= 0
+                    n_coarse_classified = int(np.sum(coarse_classified))
+                    n_coarse_unclassified = selected - n_coarse_classified
+                    n_coarse_multiply_assigned = int(
+                        np.sum(prediction_truth_match_count > 1)
+                    )
+                    _update_unclassified_diagnostics(
+                        fine_unclassified,
+                        selected_columns,
+                        ~classified,
+                        config.truth_branches,
+                    )
+                    _update_unclassified_diagnostics(
+                        coarse_unclassified,
+                        selected_columns,
+                        ~coarse_classified,
+                        config.truth_branches,
+                    )
 
                     raw_weight = np.asarray(
                         selected_columns[config.weight_branch], dtype=np.float64
@@ -220,6 +314,13 @@ def load_nn_dataset(
                             np.asarray(selected_columns[branch], dtype=np.float64)
                         )
                     truth_buffers.append(truth_index)
+                    prediction_truth_buffers.append(prediction_truth_index)
+                    truth_match_count_buffers.append(truth_match_count)
+                    prediction_truth_match_count_buffers.append(
+                        prediction_truth_match_count
+                    )
+                    for name, diagnostic_mask in diagnostic_masks.items():
+                        diagnostic_truth_buffers[name].append(diagnostic_mask)
                     sample_index_buffers.append(
                         np.full(selected, sample_number - 1, dtype=np.int16)
                     )
@@ -232,13 +333,35 @@ def load_nn_dataset(
                     summary["events_selected"] += selected
                     summary["events_classified"] += n_classified
                     summary["events_unclassified"] += n_unclassified
+                    summary["fine_events_classified"] += n_classified
+                    summary["fine_events_unclassified"] += n_unclassified
+                    summary["fine_events_multiply_assigned"] += n_multiply_assigned
+                    summary["coarse_events_classified"] += n_coarse_classified
+                    summary["coarse_events_unclassified"] += n_coarse_unclassified
+                    summary["coarse_events_multiply_assigned"] += (
+                        n_coarse_multiply_assigned
+                    )
                     summary["analysis_weight_sum"] += float(np.sum(analysis_weight[classified]))
                     summary["signed_weight_sum"] += float(np.sum(signed_weight[classified]))
                     totals["events_selected"] += selected
                     totals["events_classified"] += n_classified
                     totals["events_unclassified"] += n_unclassified
+                    totals["fine_events_classified"] += n_classified
+                    totals["fine_events_unclassified"] += n_unclassified
+                    totals["fine_events_multiply_assigned"] += n_multiply_assigned
+                    totals["coarse_events_classified"] += n_coarse_classified
+                    totals["coarse_events_unclassified"] += n_coarse_unclassified
+                    totals["coarse_events_multiply_assigned"] += (
+                        n_coarse_multiply_assigned
+                    )
 
         totals["files_discovered"] += len(sample.files)
+        summary["fine_unclassified_diagnostics"] = _format_unclassified_diagnostics(
+            fine_unclassified, config.truth_branches
+        )
+        summary["coarse_unclassified_diagnostics"] = _format_unclassified_diagnostics(
+            coarse_unclassified, config.truth_branches
+        )
         sample_summaries.append(summary)
 
     if not truth_buffers:
@@ -246,6 +369,15 @@ def load_nn_dataset(
     return NnDataset(
         scores={name: np.concatenate(parts) for name, parts in score_buffers.items()},
         truth_index=np.concatenate(truth_buffers),
+        prediction_truth_index=np.concatenate(prediction_truth_buffers),
+        truth_match_count=np.concatenate(truth_match_count_buffers),
+        prediction_truth_match_count=np.concatenate(
+            prediction_truth_match_count_buffers
+        ),
+        diagnostic_truth_masks={
+            name: np.concatenate(parts) if parts else np.array([], dtype=bool)
+            for name, parts in diagnostic_truth_buffers.items()
+        },
         sample_index=np.concatenate(sample_index_buffers),
         raw_weight=np.concatenate(raw_weight_buffers),
         analysis_weight=np.concatenate(analysis_weight_buffers),

@@ -1,0 +1,147 @@
+{
+  "normalization": {
+    "gen_sumw_file": "/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval/v4_2or3_Class/1L_v4/gen_sumws.json",
+    "xsec_file": "/eos/user/h/hanw/ttHcc/tthcc_an/crosssections_run3.json",
+    "lumi_fb": 109.08
+  },
+  "study": {
+    "channel": "2024 boosted 1L NN v4 (2-class coarse training)",
+    "year": "2024",
+    "energy_tev": 13.6,
+    "input_location": "/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval/v4_2or3_Class/1L_v4_events",
+    "sample_file_pattern": "{input_location}/{name}/*.root",
+    "outdir": "outputs/nn_study_2024_1l_v4",
+    "tree_name": "Events",
+    "weight_branch": "weight",
+    "selection": "",
+    "selection_branches": [],
+    "truth_branches": ["higgs_decay", "z_decay", "w_decay", "n_gentop", "tt_hf_flavor", "tt_hf_count"],
+    "analysis_branches": [
+      "nJet", "nCleanedJet", "nLepton", "nfatjet", "nTargetFatJet",
+      "TargetFatJet_mass", "TargetFatJet_msoftdrop",
+      "TargetFatJet_regressed_mass_generic",
+      "TargetFatJet_regressed_mass_x2p", "TargetFatJet_random_mass"
+    ],
+    "flatten_first_branches": [
+      "TargetFatJet_mass", "TargetFatJet_msoftdrop",
+      "TargetFatJet_regressed_mass_generic",
+      "TargetFatJet_regressed_mass_x2p", "TargetFatJet_random_mass"
+    ],
+    "uproot_step_size": "200 MB",
+    "validate_auc_with_sklearn": true
+  },
+  "plot": {
+    "format": "png",
+    "score_bins": 20,
+    "score_range": [0.0, 1.0],
+    "shape_log_y": true,
+    "shape_y_min": 0.0001,
+    "yield_log_y": true,
+    "roc_y_min": 0.00001,
+    "roc_y_max": 2.0,
+    "score_dpi": 150,
+    "confusion_dpi": 150,
+    "roc_dpi": 100,
+    "auc_dpi": 150
+  },
+  "significance_mass_window": {
+    "enabled": true,
+    "branch": "TargetFatJet_regressed_mass_generic",
+    "range": [100.0, 150.0]
+  },
+  "analysis_regions": {
+    "enabled": true,
+    "ar": {
+      "cuts": [
+        {"score": "score_ttHZ", "direction": ">=", "threshold": 0.70}
+      ],
+      "score_plot_ranges": {
+        "score_ttHZ": {"min": 0.70, "max": 1.00, "bins": 30},
+        "score_ttjets": {"min": 0.00, "max": 0.30, "bins": 30}
+      }
+    },
+    "conditional_qcd_veto": {"enabled": false}
+  },
+  "weighting_diagnostics": {"enabled": false},
+  "score_significance": {
+    "enabled": true,
+    "signals": ["ttHcc", "ttHbb"],
+    "metric": "s_over_sqrt_s_plus_b",
+    "scans": [
+      {"score": "score_ttHZ", "direction": ">", "min": 0.0, "max": 1.0, "points": 201},
+      {"score": "score_ttjets", "direction": "<", "min": 0.0, "max": 1.0, "points": 201}
+    ]
+  },
+  "mass_sculpting": {
+    "enabled": true,
+    "populations": [
+      {"name": "all_selected_mc", "label": "All selected MC", "samples": "all", "truth_categories": "all"},
+      {"name": "ttHcc_sample", "label": "ttHcc sample", "sample_labels": ["ttHcc"], "truth_categories": "all"},
+      {"name": "ttHbb_sample", "label": "ttHbb sample", "sample_labels": ["ttHbb"], "truth_categories": "all"},
+      {"name": "ttZ_sample", "label": "ttZ sample", "sample_labels": ["ttZ"], "truth_categories": "all"},
+      {"name": "all_background_samples", "label": "All background samples (excluding ttH/ttZ)", "samples": "all", "exclude_sample_labels": ["ttHcc", "ttHbb", "ttZ"], "truth_categories": "all"}
+    ],
+    "variables": [
+      {"branch": "TargetFatJet_regressed_mass_generic", "label": "TargetFatJet regressed mass generic [GeV]", "bins": 45, "range_quantiles": [0.005, 0.995], "padding_fraction": 0.04}
+    ],
+    "scans": [
+      {"score": "score_ttHZ", "direction": ">", "thresholds": [0.40, 0.50, 0.60, 0.70, 0.80, 0.90, 0.95]},
+      {"score": "score_ttjets", "direction": "<", "thresholds": [0.05, 0.10, 0.20, 0.30, 0.40, 0.50, 0.60]}
+    ],
+    "summary_scans": [
+      {
+        "score": "score_ttHZ",
+        "direction": ">",
+        "thresholds": [
+          0.60, 0.61, 0.62, 0.63, 0.64, 0.65, 0.66,
+          0.67, 0.68, 0.69, 0.70, 0.71, 0.72, 0.73,
+          0.74, 0.75, 0.76, 0.77, 0.78, 0.79, 0.80,
+          0.81, 0.82, 0.83, 0.84, 0.85
+        ],
+        "populations": ["ttHcc_sample", "all_background_samples"]
+      }
+    ]
+  },
+  "scores": [
+    {"name": "ttHZ", "label": "ttH/Z", "branch": "score_ttHZ", "color": "orangered"},
+    {"name": "ttjets", "label": "tt+jets", "branch": "score_ttjets", "color": "royalblue"}
+  ],
+  "truth_categories": [
+    {"name": "ttHcc", "label": "ttHcc", "expression": "(higgs_decay == 4) & (n_gentop > 0)", "color": "orangered"},
+    {"name": "ttHbb", "label": "ttHbb", "expression": "(higgs_decay == 5) & (n_gentop > 0)", "color": "#FDAE61"},
+    {"name": "ttZqq", "label": "ttZqq", "expression": "(z_decay >= 1) & (z_decay <= 3) & (higgs_decay == 0) & (n_gentop > 0)", "color": "crimson"},
+    {"name": "ttZcc", "label": "ttZcc", "expression": "(z_decay == 4) & (higgs_decay == 0) & (n_gentop > 0)", "color": "pink"},
+    {"name": "ttZbb", "label": "ttZbb", "expression": "(z_decay == 5) & (higgs_decay == 0) & (n_gentop > 0)", "color": "tab:pink"},
+    {"name": "ttLF", "label": "ttLF", "expression": "(tt_hf_flavor == 0) & (higgs_decay == 0) & (z_decay == 0) & (n_gentop > 0)", "color": "blue"},
+    {"name": "ttcj", "label": "ttcj", "expression": "(tt_hf_flavor == 4) & (tt_hf_count <= 1) & (higgs_decay == 0) & (z_decay == 0) & (n_gentop > 0)", "color": "#ABD9E9"},
+    {"name": "ttcc", "label": "ttcc", "expression": "(tt_hf_flavor == 4) & (tt_hf_count > 2) & (higgs_decay == 0) & (z_decay == 0) & (n_gentop > 0)", "color": "#74ADD1"},
+    {"name": "tt2c", "label": "tt2c", "expression": "(tt_hf_flavor == 4) & (tt_hf_count == 2) & (higgs_decay == 0) & (z_decay == 0) & (n_gentop > 0)", "color": "#4575B4"},
+    {"name": "ttbj", "label": "ttbj", "expression": "(tt_hf_flavor == 5) & (tt_hf_count <= 1) & (higgs_decay == 0) & (z_decay == 0) & (n_gentop > 0)", "color": "#313695"},
+    {"name": "ttbb", "label": "ttbb", "expression": "(tt_hf_flavor == 5) & (tt_hf_count > 2) & (higgs_decay == 0) & (z_decay == 0) & (n_gentop > 0)", "color": "darkgreen"},
+    {"name": "tt2b", "label": "tt2b", "expression": "(tt_hf_flavor == 5) & (tt_hf_count == 2) & (higgs_decay == 0) & (z_decay == 0) & (n_gentop > 0)", "color": "forestgreen"}
+  ],
+  "prediction_truth_categories": [
+    {"name": "ttHZ", "label": "ttH/Z", "expression": "((higgs_decay == 4) & (n_gentop > 0)) | ((higgs_decay == 5) & (n_gentop > 0)) | ((z_decay >= 1) & (z_decay <= 3) & (higgs_decay == 0) & (n_gentop > 0)) | ((z_decay == 4) & (higgs_decay == 0) & (n_gentop > 0)) | ((z_decay == 5) & (higgs_decay == 0) & (n_gentop > 0))", "color": "orangered"},
+    {"name": "ttjets", "label": "tt+jets", "expression": "((tt_hf_flavor == 0) & (higgs_decay == 0) & (z_decay == 0) & (n_gentop > 0)) | ((tt_hf_flavor == 4) & (tt_hf_count <= 1) & (higgs_decay == 0) & (z_decay == 0) & (n_gentop > 0)) | ((tt_hf_flavor == 4) & (tt_hf_count > 2) & (higgs_decay == 0) & (z_decay == 0) & (n_gentop > 0)) | ((tt_hf_flavor == 4) & (tt_hf_count == 2) & (higgs_decay == 0) & (z_decay == 0) & (n_gentop > 0)) | ((tt_hf_flavor == 5) & (tt_hf_count <= 1) & (higgs_decay == 0) & (z_decay == 0) & (n_gentop > 0)) | ((tt_hf_flavor == 5) & (tt_hf_count > 2) & (higgs_decay == 0) & (z_decay == 0) & (n_gentop > 0)) | ((tt_hf_flavor == 5) & (tt_hf_count == 2) & (higgs_decay == 0) & (z_decay == 0) & (n_gentop > 0))", "color": "royalblue"}
+  ],
+  "samples": [
+    {"name": "ttH-Hto2C_M-125_TTTo2L2Nu_TuneCP5_13p6TeV-powheg-pythia8", "label": "ttHcc"},
+    {"name": "ttH-Hto2C_M-125_TTToHadronic_TuneCP5_13p6TeV-powheg-pythia", "label": "ttHcc"},
+    {"name": "ttH-Hto2C_M-125_TTToSemiLep_TuneCP5_13p6TeV-powheg-pythia8", "label": "ttHcc"},
+    {"name": "TTH-Hto2B-TTto2L2Nu_Par-M-125_TuneCP5_13p6TeV_powheg-pythia8", "label": "ttHbb"},
+    {"name": "TTH-Hto2B-TTto4Q_Par-M-125_TuneCP5_13p6TeV_powheg-pythia8", "label": "ttHbb"},
+    {"name": "TTH-Hto2B-TTtoLNu2Q_Par-M-125_TuneCP5_13p6TeV_powheg-pythia8", "label": "ttHbb"},
+    {"name": "ttZ-Zto2Q_M-125_TTTo2L2Nu_TuneCP5_13p6TeV-powheg-pythia8", "label": "ttZ"},
+    {"name": "ttZ-Zto2Q_M-125_TTToHadronic_TuneCP5_13p6TeV-powheg-pythia8", "label": "ttZ"},
+    {"name": "ttZ-Zto2Q_M-125_TTToSemiLep_TuneCP5_13p6TeV-powheg-pythia8", "label": "ttZ"},
+    {"name": "TTtoLNu2Q_TuneCP5_13p6TeV_powheg-pythia8", "label": "tt+LF/c", "selection": "tt_hf_flavor != 5"},
+    {"name": "TTto2L2Nu_TuneCP5_13p6TeV_powheg-pythia8", "label": "tt+LF/c", "selection": "tt_hf_flavor != 5"},
+    {"name": "TTto4Q_TuneCP5_13p6TeV_powheg-pythia8", "label": "tt+LF/c", "selection": "tt_hf_flavor != 5"},
+    {"name": "TTBBtoLNu2Q_TuneCP5_13p6TeV_powheg-pythia8", "label": "tt+b", "selection": "tt_hf_flavor == 5"},
+    {"name": "TTBBto2L2Nu_TuneCP5_13p6TeV_powheg-pythia8", "label": "tt+b", "selection": "tt_hf_flavor == 5"},
+    {"name": "TTBBto4Q_TuneCP5_13p6TeV_powheg-pythia8", "label": "tt+b", "selection": "tt_hf_flavor == 5"},
+    {"name": "TTtoLNu2Q-BBDPS_TuneCP5_13p6TeV_powheg-pythia8", "label": "tt+b DPS", "selection": "tt_hf_flavor == 5"},
+    {"name": "TTto2L2Nu-BBDPS_TuneCP5_13p6TeV_powheg-pythia8", "label": "tt+b DPS", "selection": "tt_hf_flavor == 5"},
+    {"name": "TTto4Q-BBDPS_TuneCP5_13p6TeV_powheg-pythia8", "label": "tt+b DPS", "selection": "tt_hf_flavor == 5"}
+  ]
+}

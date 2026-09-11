@@ -476,11 +476,12 @@ event-BDT 原型目前有四个模式：
 `score_ttjets`。0L 额外把 `score_qcd` 作为正式分类输出，truth 为
 `n_gentop == 0`。
 
-`--only scores confusion roc auc mass-sculpting score-significance qcd-score-scan weighting-diagnostics`
+`--only scores confusion roc auc mass-sculpting score-significance score-significance-2d qcd-score-scan weighting-diagnostics`
 可限制绘图组，但 summary 总会写出。
 `--only mass-sculpting` 会按需只读配置中的 scan score、mass、truth/stitching
 和 weight branches，并跳过 score/confusion/ROC/AUC 计算。直接模式仍需扫描
 ROOT events；需要反复研究时先准备一次 event-level cache：
+`--mass-sculpting-score score_qcd` 可进一步只运行配置中的 QCD mass scan。
 
 ```bash
 python scripts/run_nn_study.py \
@@ -562,10 +563,37 @@ NN study 额外约定：
   `/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_{0L,1L}_v3/gen_sumws.json`；
   v3 训练时将 target-fatjet mass input 固定为 0。0L v3 production 当前允许未完成，
   即使 `gen_sumws.json` 尚未产生也先保留预期路径，不要改用其他版本的 normalization
+- coarse-class v4 config 是
+  `config/nn_study/nn_study_2024_{0l,1l}_v4.json`。V4 不是旧 12/13 类模型换路径：
+  1L 原生类只有 `score_ttHZ/score_ttjets`，0L 另有 `score_qcd`；confusion/ROC
+  使用 coarse truth，fine truth 仅用于 composition 和 ttHcc/ttHbb significance。
+  0L `bdt_score_*` 不是 V4 NN 输出，不得加入 prediction classes
+- V4 fine truth 使用训练定义中的 `n_gentop > 0`，不能复用旧版
+  `n_gentop == 2`；0L merged qcd 必须严格等于 `qcdraw|wcq|wqq|zbb|zcc|zqq`，
+  不得简写成 `n_gentop == 0`
+- V4 除 coarse-truth score 图外，还输出 `plots/score_fine_truth/` 下按全部 fine
+  truth 分类的 shape/yield 图；两者用途不同，五个 ttHZ component 的专用图也保留
+- V4 mass-sculpting 的首组候选可视化 cut 是
+  `score_ttHZ > 0.40,0.50,0.60,0.70,0.80,0.90,0.95` 和
+  `score_ttjets < 0.05,0.10,0.20,0.30,0.40,0.50,0.60`，不是最终 WP；
+  0L V4 另有 `score_qcd < 0.03,0.04,0.05,0.075,0.10,0.15,0.20,0.30`，
+  同样只是诊断候选点；1L V4 不增加这组 cut
+- 1L V4 另用 `mass_sculpting.summary_scans` 对 `ttHcc_sample` 和
+  `all_background_samples` 记录 `score_ttHZ > 0.60..0.85`、步长 0.01 的详细
+  yield；该扫描只写 summary，不增加 mass 图曲线，也不参与 binary complement 检查
+- 0L V4 QCD scan 使用线性 `[0,1]` 201 点且 `reference_threshold: null`，
+  在选定新 WP 前不得画任意 cut
+- 0L V4 完整 production cache 位于
+  `outputs/nn_study_2024_0l_v4/cache/prepared_events.npz`；重复研究必须优先
+  `--from-cache`，不要重新读取 ROOT
+- 0L V4 的 `score_significance_2d` 扫描
+  `score_ttHZ > A AND score_qcd < B`，输出 S/B/Z、信号/背景与 physics-group
+  效率矩阵、95%/98% plateau、代表性工作点和可选 `score_ttjets` 第三 cut 诊断；
+  用 `--only score-significance-2d` 单独运行。数值最大点和所有候选 cut 均不是最终 WP
 - 两个 config 使用 `study.sample_file_pattern = {input_location}/{name}/*.root`；
   同目录结构的新 prediction 只需改 `input_location`、`gen_sumw_file` 和 `outdir`，
   不要恢复逐 sample 的绝对 `files` 路径
-- 实际 NN 分支使用 `score_<class>`，包含 `score_ttZqq`；12 个 score class 与 truth class 必须同名同序
+- v1/v2/v3 实际 NN 分支使用 `score_<class>`，包含 `score_ttZqq`；其 12 个 score class 与 truth class 必须同名同序
 - truth 分支是 `higgs_decay`, `z_decay`, `n_gentop`, `tt_hf_flavor`, `tt_hf_count`
 - truth 定义保持 resolved/Pepper 现行约定；`tt_hf_count` 的 1/2/>2 分别对应 single-extra、double-extra、pair-extra 类，不要静默重定义
 - ntuple 已在 Pepper `HasTargetFatJet` 末级写出，且此前已过 `ReqMassWindow`；shipping config 不额外加 `nJet > 4` 或其他 physics cut

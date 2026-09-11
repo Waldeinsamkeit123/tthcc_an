@@ -157,7 +157,8 @@ def _scan_payload(
     population: NnMassPopulation,
     bins: np.ndarray,
     population_mask: np.ndarray,
-    outpath: Path,
+    outpath: Path | None,
+    make_plot: bool = True,
 ) -> dict[str, Any]:
     mass_values = np.asarray(dataset.analysis_columns[variable.branch], dtype=np.float64)
     score_values = np.asarray(dataset.scores[scan.score_name], dtype=np.float64)
@@ -242,15 +243,18 @@ def _scan_payload(
         raise ValueError(
             f"Mass-sculpting selections are not nested for '{scan.score_branch}'."
         )
-    plot_mass_sculpting(
-        outpath=outpath,
-        bins=bins,
-        base_density=base_density,
-        curves=curves,
-        variable_label=variable.label,
-        population_label=population.label,
-        score_branch=scan.score_branch,
-    )
+    if make_plot:
+        if outpath is None:
+            raise ValueError("A plot path is required for a plotted mass scan.")
+        plot_mass_sculpting(
+            outpath=outpath,
+            bins=bins,
+            base_density=base_density,
+            curves=curves,
+            variable_label=variable.label,
+            population_label=population.label,
+            score_branch=scan.score_branch,
+        )
     return {
         "variable": variable.branch,
         "variable_label": variable.label,
@@ -260,7 +264,7 @@ def _scan_payload(
         "population_label": population.label,
         "direction": scan.direction,
         "thresholds": scan.thresholds,
-        "plot": str(outpath),
+        "plot": None if outpath is None else str(outpath),
         "bins": variable.bins,
         "plot_range": [float(bins[0]), float(bins[-1])],
         "range_quantiles": list(variable.range_quantiles),
@@ -268,6 +272,129 @@ def _scan_payload(
         "uncut_normalized_shape_integral": base_integral,
         "nested_selection_valid": nested_valid,
         "points": rows,
+    }
+
+
+def _binary_complementarity_validation(
+    *,
+    config: NnStudyConfig,
+    dataset: NnDataset,
+    settings: NnMassSculptingConfig,
+    scans: list[NnMassScan] | None = None,
+) -> dict[str, Any]:
+    if len(config.scores) != 2:
+        return {
+            "applicable": False,
+            "reason": "Native prediction model is not binary.",
+        }
+    selected_scans = settings.scans if scans is None else scans
+    upper_scans = [scan for scan in selected_scans if scan.direction == ">"]
+    lower_scans = [scan for scan in selected_scans if scan.direction == "<"]
+    if len(upper_scans) != 1 or len(lower_scans) != 1:
+        return {
+            "applicable": False,
+            "reason": "Exactly one '>' scan and one '<' scan are required.",
+        }
+
+    upper_scan = upper_scans[0]
+    lower_scan = lower_scans[0]
+    upper_score = np.asarray(dataset.scores[upper_scan.score_name], dtype=np.float64)
+    lower_score = np.asarray(dataset.scores[lower_scan.score_name], dtype=np.float64)
+    weights = np.asarray(dataset.analysis_weight, dtype=np.float64)
+    finite = (
+        np.isfinite(upper_score)
+        & np.isfinite(lower_score)
+        & np.isfinite(weights)
+        & (weights > 0.0)
+    )
+    score_sum = upper_score[finite] + lower_score[finite]
+    max_sum_deviation = (
+        float(np.max(np.abs(score_sum - 1.0))) if score_sum.size else None
+    )
+    boundary_tolerance = max(
+        1e-6,
+        2.0 * (max_sum_deviation or 0.0),
+    )
+
+    rows: list[dict[str, Any]] = []
+    for upper_cut in upper_scan.thresholds:
+        target_lower_cut = 1.0 - upper_cut
+        matches = [
+            cut
+            for cut in lower_scan.thresholds
+            if np.isclose(cut, target_lower_cut, rtol=0.0, atol=1e-12)
+        ]
+        if len(matches) != 1:
+            continue
+        lower_cut = matches[0]
+        upper_selected = finite & (upper_score > upper_cut)
+        lower_selected = finite & (lower_score < lower_cut)
+        mismatch = upper_selected ^ lower_selected
+        boundary = (
+            (np.abs(upper_score - upper_cut) <= boundary_tolerance)
+            | (np.abs(lower_score - lower_cut) <= boundary_tolerance)
+        )
+        nonboundary_mismatch = mismatch & ~boundary
+        populations: dict[str, Any] = {}
+        for population in settings.populations:
+            population_mask = _population_mask(config, dataset, population)
+            upper_mask = population_mask & upper_selected
+            lower_mask = population_mask & lower_selected
+            upper_yield = float(np.sum(weights[upper_mask]))
+            lower_yield = float(np.sum(weights[lower_mask]))
+            absolute_difference = abs(upper_yield - lower_yield)
+            scale = max(abs(upper_yield), abs(lower_yield), 1.0)
+            populations[population.name] = {
+                "upper_score_event_count": int(np.sum(upper_mask)),
+                "lower_score_event_count": int(np.sum(lower_mask)),
+                "upper_score_weighted_yield": upper_yield,
+                "lower_score_weighted_yield": lower_yield,
+                "weighted_yield_absolute_difference": absolute_difference,
+                "weighted_yield_relative_difference": absolute_difference / scale,
+                "exact_selected_mask_match": bool(
+                    not np.any(population_mask & mismatch)
+                ),
+                "nonboundary_mismatch_count": int(
+                    np.sum(population_mask & nonboundary_mismatch)
+                ),
+                "weighted_yields_agree_with_boundary_tolerance": bool(
+                    not np.any(population_mask & nonboundary_mismatch)
+                ),
+            }
+        rows.append(
+            {
+                "upper_score": upper_scan.score_branch,
+                "upper_direction": upper_scan.direction,
+                "upper_threshold": upper_cut,
+                "lower_score": lower_scan.score_branch,
+                "lower_direction": lower_scan.direction,
+                "lower_threshold": lower_cut,
+                "mismatched_event_count": int(np.sum(mismatch)),
+                "nonboundary_mismatch_count": int(np.sum(nonboundary_mismatch)),
+                "populations": populations,
+            }
+        )
+
+    all_pairs_present = len(rows) == len(upper_scan.thresholds)
+    all_pairs_agree = all_pairs_present and all(
+        row["nonboundary_mismatch_count"] == 0 for row in rows
+    )
+    score_sum_compatible = (
+        max_sum_deviation is not None and max_sum_deviation <= 1e-5
+    )
+    return {
+        "applicable": True,
+        "semantics": (
+            "For a binary normalized output, score_A > t is compared with "
+            "score_B < 1-t. Differences are accepted only at floating-point "
+            "boundaries."
+        ),
+        "score_sum_max_abs_deviation_from_one": max_sum_deviation,
+        "boundary_tolerance": boundary_tolerance,
+        "score_sum_compatible": score_sum_compatible,
+        "all_complementary_pairs_present": all_pairs_present,
+        "all_selected_masks_and_weighted_yields_agree": all_pairs_agree,
+        "pairs": rows,
     }
 
 
@@ -310,6 +437,48 @@ def _format_summary(payload: dict[str, Any]) -> str:
                 f"{row['weighted_yield_before_cut']:.8g}, "
                 f"eff={row['weighted_efficiency']:.6g}, shape_diff={shape_text}"
             )
+    if payload["summary_scans"]:
+        lines.extend(["", "Detailed summary-only scans (not added to plots):"])
+        for scan in payload["summary_scans"]:
+            lines.extend(
+                [
+                    "",
+                    f"{scan['population']}: {scan['variable']} vs "
+                    f"{scan['score_branch']} {scan['direction']} threshold",
+                    f"  bins: {scan['bins']}",
+                    f"  range: {scan['plot_range'][0]:.6g} to {scan['plot_range'][1]:.6g} GeV",
+                    f"  nested selections valid: {scan['nested_selection_valid']}",
+                ]
+            )
+            for row in scan["points"]:
+                shape_change = row["max_abs_bin_probability_difference"]
+                shape_text = "none" if shape_change is None else f"{shape_change:.6g}"
+                lines.append(
+                    f"  cut {scan['direction']} {row['threshold']:g}: "
+                    f"N={row['event_count_after_cut']}/{row['event_count_before_cut']}, "
+                    f"yield={row['weighted_yield_after_cut']:.8g}/"
+                    f"{row['weighted_yield_before_cut']:.8g}, "
+                    f"eff={row['weighted_efficiency']:.6g}, shape_diff={shape_text}"
+                )
+    complementarity = payload["binary_complementarity_validation"]
+    lines.extend(["", "Binary complementarity validation:"])
+    if not complementarity["applicable"]:
+        lines.append(f"  not applicable: {complementarity['reason']}")
+    else:
+        lines.append(
+            "  all pairs agree outside floating boundaries: "
+            f"{complementarity['all_selected_masks_and_weighted_yields_agree']}"
+        )
+        for row in complementarity["pairs"]:
+            all_selected = row["populations"].get("all_selected_mc", {})
+            lines.append(
+                f"  {row['upper_score']} > {row['upper_threshold']:g} vs "
+                f"{row['lower_score']} < {row['lower_threshold']:g}: "
+                f"mismatch={row['mismatched_event_count']}, "
+                f"nonboundary={row['nonboundary_mismatch_count']}, "
+                f"yield={all_selected.get('upper_score_weighted_yield')} vs "
+                f"{all_selected.get('lower_score_weighted_yield')}"
+            )
     return "\n".join(lines) + "\n"
 
 
@@ -320,9 +489,25 @@ def run_mass_sculpting(
     plot_dir: Path,
     summary_dir: Path,
     plot_suffix: str,
+    selected_score_names: set[str] | None = None,
 ) -> tuple[list[str], dict[str, Any]]:
     settings: NnMassSculptingConfig = config.mass_sculpting
+    configured_scans = [
+        scan
+        for scan in settings.scans
+        if selected_score_names is None or scan.score_name in selected_score_names
+    ]
+    configured_summary_scans = [
+        scan
+        for scan in settings.summary_scans
+        if selected_score_names is None or scan.score_name in selected_score_names
+    ]
+    if selected_score_names is not None and not (
+        configured_scans or configured_summary_scans
+    ):
+        raise ValueError("No mass-sculpting scans match the requested score filter.")
     scans: list[dict[str, Any]] = []
+    summary_scans: list[dict[str, Any]] = []
     plots: list[str] = []
     populations: list[dict[str, Any]] = []
     for population in settings.populations:
@@ -347,6 +532,8 @@ def run_mass_sculpting(
                 "selected_event_count": int(np.sum(population_mask)),
             }
         )
+        if not configured_scans and not configured_summary_scans:
+            continue
         for variable in settings.variables:
             bins = _mass_bins(
                 variable,
@@ -356,7 +543,12 @@ def run_mass_sculpting(
                 dataset.analysis_weight,
                 population_mask,
             )
-            for scan in settings.scans:
+            for scan in configured_scans:
+                if (
+                    scan.populations is not None
+                    and population.name not in scan.populations
+                ):
+                    continue
                 population_suffix = (
                     "" if population.name == "all_selected_mc" else f"__{population.name}"
                 )
@@ -377,6 +569,25 @@ def run_mass_sculpting(
                     )
                 )
                 plots.append(str(outpath))
+            for scan in configured_summary_scans:
+                if (
+                    scan.populations is not None
+                    and population.name not in scan.populations
+                ):
+                    continue
+                summary_scans.append(
+                    _scan_payload(
+                        config=config,
+                        dataset=dataset,
+                        variable=variable,
+                        scan=scan,
+                        population=population,
+                        bins=bins,
+                        population_mask=population_mask,
+                        outpath=None,
+                        make_plot=False,
+                    )
+                )
 
     payload: dict[str, Any] = {
         "schema_version": 1,
@@ -396,7 +607,22 @@ def run_mass_sculpting(
         "shape_change_metric": (
             "Maximum absolute bin-by-bin difference between uncut and cut normalized bin probabilities."
         ),
+        "scan_status": (
+            "configured"
+            if configured_scans
+            else "disabled: no plotted working points configured"
+        ),
+        "selected_score_names": (
+            "all" if selected_score_names is None else sorted(selected_score_names)
+        ),
+        "binary_complementarity_validation": _binary_complementarity_validation(
+            config=config,
+            dataset=dataset,
+            settings=settings,
+            scans=configured_scans,
+        ),
         "scans": scans,
+        "summary_scans": summary_scans,
         "plots": plots,
     }
     json_path = summary_dir / "mass_sculpting_summary.json"

@@ -12,7 +12,8 @@ from tthcc_an.nn_study.config import NnStudyConfig
 from tthcc_an.nn_study.dataset import NnDataset
 
 
-CACHE_SCHEMA_VERSION = 1
+CACHE_SCHEMA_VERSION = 2
+SUPPORTED_CACHE_SCHEMA_VERSIONS = {1, CACHE_SCHEMA_VERSION}
 DEFAULT_CACHE_NAME = "prepared_events.npz"
 
 
@@ -87,10 +88,26 @@ def _truth_definitions(config: NnStudyConfig) -> list[dict[str, str]]:
     ]
 
 
-def cache_definition(config: NnStudyConfig) -> dict[str, Any]:
+def cache_definition(
+    config: NnStudyConfig,
+    fallback_definition: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     samples = _sample_definitions(config)
     truths = _truth_definitions(config)
-    return {
+    fallback_normalization = dict(
+        (fallback_definition or {}).get("normalization", {})
+    )
+
+    def source_hash(path: str, file_key: str, hash_key: str) -> str:
+        if Path(path).exists():
+            return _sha256_file(path)
+        if fallback_normalization.get(file_key) == path and fallback_normalization.get(
+            hash_key
+        ):
+            return str(fallback_normalization[hash_key])
+        raise FileNotFoundError(f"Normalization source file does not exist: {path}")
+
+    definition = {
         "channel": config.channel,
         "year": config.year,
         "energy_tev": config.energy_tev,
@@ -109,12 +126,35 @@ def cache_definition(config: NnStudyConfig) -> dict[str, Any]:
         "normalization": {
             "lumi_fb": config.lumi_fb,
             "gen_sumw_file": config.gen_sumw_file,
-            "gen_sumw_sha256": _sha256_file(config.gen_sumw_file),
+            "gen_sumw_sha256": source_hash(
+                config.gen_sumw_file, "gen_sumw_file", "gen_sumw_sha256"
+            ),
             "xsec_file": config.xsec_file,
-            "xsec_sha256": _sha256_file(config.xsec_file),
+            "xsec_sha256": source_hash(
+                config.xsec_file, "xsec_file", "xsec_sha256"
+            ),
         },
         "max_files_per_sample": config.max_files_per_sample,
     }
+    if config.uses_distinct_prediction_truth:
+        prediction_truths = [
+            {"name": truth.name, "expression": truth.expression}
+            for truth in config.prediction_truth_categories
+        ]
+        definition["prediction_truth_definitions"] = prediction_truths
+        definition["prediction_truth_definition_hash"] = _payload_hash(
+            prediction_truths
+        )
+    if config.diagnostic_truth_categories:
+        diagnostic_truths = [
+            {"name": truth.name, "expression": truth.expression}
+            for truth in config.diagnostic_truth_categories
+        ]
+        definition["diagnostic_truth_definitions"] = diagnostic_truths
+        definition["diagnostic_truth_definition_hash"] = _payload_hash(
+            diagnostic_truths
+        )
+    return definition
 
 
 def input_file_fingerprint(config: NnStudyConfig) -> dict[str, Any]:
@@ -177,11 +217,27 @@ def write_nn_cache(
     analysis_metadata = _stored_analysis_metadata(config, dataset)
     arrays: dict[str, np.ndarray] = {
         "truth_index": dataset.truth_index,
+        "prediction_truth_index": dataset.prediction_truth_index,
+        "truth_match_count": dataset.truth_match_count,
+        "prediction_truth_match_count": dataset.prediction_truth_match_count,
         "sample_index": dataset.sample_index,
         "raw_weight": dataset.raw_weight,
         "analysis_weight": dataset.analysis_weight,
         "signed_weight": dataset.signed_weight,
     }
+    diagnostic_metadata = {
+        name: {
+            "array_key": f"diagnostic_truth_{index:03d}",
+            "dtype": str(dataset.diagnostic_truth_masks[name].dtype),
+        }
+        for index, name in enumerate(dataset.diagnostic_truth_masks)
+    }
+    arrays.update(
+        {
+            entry["array_key"]: dataset.diagnostic_truth_masks[name]
+            for name, entry in diagnostic_metadata.items()
+        }
+    )
     arrays.update(
         {
             entry["array_key"]: dataset.scores[name]
@@ -219,6 +275,9 @@ def write_nn_cache(
                 if name
                 in {
                     "truth_index",
+                    "prediction_truth_index",
+                    "truth_match_count",
+                    "prediction_truth_match_count",
                     "sample_index",
                     "raw_weight",
                     "analysis_weight",
@@ -227,11 +286,15 @@ def write_nn_cache(
             },
             "scores": score_metadata,
             "analysis_columns": analysis_metadata,
+            "diagnostic_truth_masks": diagnostic_metadata,
         },
         "stored_score_names": list(score_metadata),
         "stored_score_branches": [
             entry["branch"] for entry in score_metadata.values()
         ],
+        "analysis_discriminants": {
+            name: score_metadata[name] for name in config.analysis_discriminants
+        },
         "stored_analysis_branches": list(analysis_metadata),
         "requested_root_branches": requested_root_branches,
         "number_of_selected_events": int(dataset.truth_index.size),
@@ -260,7 +323,7 @@ def read_cache_metadata(cache_path: Path) -> dict[str, Any]:
         )
     with metadata_path.open(encoding="utf-8") as source:
         metadata = json.load(source)
-    if metadata.get("cache_schema_version") != CACHE_SCHEMA_VERSION:
+    if metadata.get("cache_schema_version") not in SUPPORTED_CACHE_SCHEMA_VERSIONS:
         raise ValueError(
             "NN-study cache schema is incompatible; rebuild with "
             "--prepare-cache --force."
@@ -275,8 +338,22 @@ def validate_nn_cache(
     check_input_files: bool,
 ) -> dict[str, Any]:
     metadata = read_cache_metadata(cache_path)
-    current_definition = cache_definition(config)
+    if (
+        metadata.get("cache_schema_version") == 1
+        and (
+            config.uses_distinct_prediction_truth
+            or bool(config.diagnostic_truth_categories)
+        )
+    ):
+        raise ValueError(
+            "Schema-1 cache does not contain V4 coarse/diagnostic truth arrays; "
+            "rebuild with --prepare-cache --force."
+        )
     cached_definition = metadata.get("definition", {})
+    current_definition = cache_definition(config, cached_definition)
+    # The channel string is a display label, not part of the cached event schema.
+    if "channel" in cached_definition:
+        current_definition["channel"] = cached_definition["channel"]
     if metadata.get("definition_hash") != _payload_hash(current_definition):
         changed = sorted(
             key
@@ -335,6 +412,10 @@ def load_nn_cache(
     score_metadata = metadata["stored_arrays"]["scores"]
     analysis_metadata = metadata["stored_arrays"]["analysis_columns"]
     with np.load(cache_path, allow_pickle=False) as arrays:
+        schema_version = int(metadata["cache_schema_version"])
+        diagnostic_metadata = metadata["stored_arrays"].get(
+            "diagnostic_truth_masks", {}
+        )
         required_keys = {
             "truth_index",
             "sample_index",
@@ -346,7 +427,16 @@ def load_nn_cache(
                 analysis_metadata[branch]["array_key"]
                 for branch in analysis_branches
             ),
+            *(entry["array_key"] for entry in diagnostic_metadata.values()),
         }
+        if schema_version >= 2:
+            required_keys.update(
+                {
+                    "prediction_truth_index",
+                    "truth_match_count",
+                    "prediction_truth_match_count",
+                }
+            )
         missing_keys = sorted(required_keys - set(arrays.files))
         if missing_keys:
             raise ValueError(
@@ -354,12 +444,32 @@ def load_nn_cache(
                 + ", ".join(missing_keys)
                 + "; rebuild with --prepare-cache --force."
             )
+        truth_index = np.asarray(arrays["truth_index"])
         dataset = NnDataset(
             scores={
                 name: np.asarray(arrays[score_metadata[name]["array_key"]])
                 for name in score_names
             },
-            truth_index=np.asarray(arrays["truth_index"]),
+            truth_index=truth_index,
+            prediction_truth_index=(
+                np.asarray(arrays["prediction_truth_index"])
+                if schema_version >= 2
+                else truth_index.copy()
+            ),
+            truth_match_count=(
+                np.asarray(arrays["truth_match_count"])
+                if schema_version >= 2
+                else (truth_index >= 0).astype(np.int16)
+            ),
+            prediction_truth_match_count=(
+                np.asarray(arrays["prediction_truth_match_count"])
+                if schema_version >= 2
+                else (truth_index >= 0).astype(np.int16)
+            ),
+            diagnostic_truth_masks={
+                name: np.asarray(arrays[entry["array_key"]])
+                for name, entry in diagnostic_metadata.items()
+            },
             sample_index=np.asarray(arrays["sample_index"]),
             raw_weight=np.asarray(arrays["raw_weight"]),
             analysis_weight=np.asarray(arrays["analysis_weight"]),

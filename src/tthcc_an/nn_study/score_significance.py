@@ -87,6 +87,13 @@ def calculate_score_significance_scan(
 
     signal_results: dict[str, dict[str, Any]] = {}
     complement_valid = True
+    max_complement_absolute_residual = 0.0
+    complement_absolute_tolerance = (
+        8.0
+        * np.finfo(np.float64).eps
+        * max(sorted_score.size, 1)
+        * max(float(np.max(np.abs(total_yield_after))), 1.0)
+    )
     nonnegative_valid = True
     finite_valid = True
     monotonic_valid = True
@@ -95,12 +102,20 @@ def calculate_score_significance_scan(
         signal_weight_prefix = _prefix(
             np.where(is_signal_sorted, sorted_weight, 0.0)
         )
+        background_weight_prefix = _prefix(
+            np.where(~is_signal_sorted, sorted_weight, 0.0)
+        )
         signal_count_prefix = np.concatenate(
             ([0], np.cumsum(is_signal_sorted, dtype=np.int64))
+        )
+        background_count_prefix = np.concatenate(
+            ([0], np.cumsum(~is_signal_sorted, dtype=np.int64))
         )
         if direction == "<":
             signal_yield = signal_weight_prefix[split_indices]
             signal_count = signal_count_prefix[split_indices]
+            background_yield = background_weight_prefix[split_indices]
+            background_count = background_count_prefix[split_indices]
         else:
             signal_yield = (
                 signal_weight_prefix[-1] - signal_weight_prefix[split_indices]
@@ -108,8 +123,15 @@ def calculate_score_significance_scan(
             signal_count = (
                 signal_count_prefix[-1] - signal_count_prefix[split_indices]
             )
-        background_yield = np.maximum(total_yield_after - signal_yield, 0.0)
-        background_count = total_count_after - signal_count
+            background_yield = (
+                background_weight_prefix[-1]
+                - background_weight_prefix[split_indices]
+            )
+            background_count = (
+                background_count_prefix[-1]
+                - background_count_prefix[split_indices]
+            )
+        background_yield = np.maximum(background_yield, 0.0)
         significance = _significance(signal_yield, background_yield)
 
         baseline_signal_mask = (
@@ -132,13 +154,14 @@ def calculate_score_significance_scan(
         )
         best_index = int(np.argmax(significance))
 
+        complement_residual = float(
+            np.max(np.abs(signal_yield + background_yield - total_yield_after))
+        )
+        max_complement_absolute_residual = max(
+            max_complement_absolute_residual, complement_residual
+        )
         complement_valid &= bool(
-            np.allclose(
-                signal_yield + background_yield,
-                total_yield_after,
-                rtol=1e-12,
-                atol=1e-12,
-            )
+            complement_residual <= complement_absolute_tolerance
             and np.array_equal(signal_count + background_count, total_count_after)
         )
         nonnegative_valid &= bool(
@@ -240,7 +263,24 @@ def calculate_score_significance_scan(
         or not monotonic_valid
         or not other_signals_in_background
     ):
-        raise ValueError("Score-significance scan failed numerical validation.")
+        failed = [
+            name
+            for name, passed in (
+                ("signal_background_are_complements", complement_valid),
+                ("nonnegative_yields_and_significance", nonnegative_valid),
+                ("finite_scan_metrics", finite_valid),
+                ("weighted_yields_monotonic_for_direction", monotonic_valid),
+                (
+                    "background_includes_other_requested_signals",
+                    other_signals_in_background,
+                ),
+            )
+            if not passed
+        ]
+        raise ValueError(
+            "Score-significance scan failed numerical validation: "
+            + ", ".join(failed)
+        )
     return {
         "metric": METRIC_NAME,
         "metric_definition": "Z = S / sqrt(S + B)",
@@ -268,6 +308,12 @@ def calculate_score_significance_scan(
         "validation": {
             "thresholds_strictly_ascending": True,
             "signal_background_are_complements": complement_valid,
+            "signal_background_max_absolute_residual": (
+                max_complement_absolute_residual
+            ),
+            "signal_background_absolute_tolerance": (
+                complement_absolute_tolerance
+            ),
             "nonnegative_yields_and_significance": nonnegative_valid,
             "finite_scan_metrics": finite_valid,
             "weighted_yields_monotonic_for_direction": monotonic_valid,

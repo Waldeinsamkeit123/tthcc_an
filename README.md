@@ -1016,6 +1016,8 @@ The independent NN-study subsystem is:
   `config/nn_study/nn_study_2024_{0l,1l}_v2_predMass.json`
 - zero-mass-trained v3 configs:
   `config/nn_study/nn_study_2024_{0l,1l}_v3_zeroMass.json`
+- coarse-class v4 configs:
+  `config/nn_study/nn_study_2024_{0l,1l}_v4.json`
 - ROOT inputs: `/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_{0L,1L}_v1_pred_RealMass_events`
 - Pepper normalization outputs: `/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_{0L,1L}_v1_pred_RealMass`
 - v2 ROOT inputs: `/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_{0L,1L}_v2_event`
@@ -1034,6 +1036,67 @@ comparison. The 0L v3 config already points to the expected
 `NNeval_0L_v3/gen_sumws.json`; that production is allowed to be incomplete, so
 the config cannot run until the normalization file and required sample outputs
 exist.
+
+V4 changes the model definition rather than only the input production. Its
+native prediction classes are `ttHZ/ttjets` in 1L and `ttHZ/ttjets/qcd` in 0L,
+from `score_ttHZ`, `score_ttjets`, and, in 0L, `score_qcd`. The NN study keeps
+the fine ttH/ttZ/tt+jets truth categories separately for composition and
+ttHcc/ttHbb significance scans, while confusion matrices and ROC/AUC use the
+coarse V4 truth. The unrelated 0L `bdt_score_*` branches are not NN classes.
+
+V4 provides both coarse-truth score plots for classifier performance and
+additional all-fine-truth shape/yield plots under `plots/score_fine_truth/` for
+physics composition. Its first diagnostic mass-sculpting candidates are
+`score_ttHZ > 0.40, 0.50, 0.60, 0.70, 0.80, 0.90, 0.95` and
+`score_ttjets < 0.05, 0.10, 0.20, 0.30, 0.40, 0.50, 0.60`; these are
+visualization cuts, not final working points. The 0L V4 config additionally scans
+`score_qcd < 0.03, 0.04, 0.05, 0.075, 0.10, 0.15, 0.20, 0.30` for the same
+five mass populations; 1L V4 remains unchanged. The 1L V4 mass summary also has a summary-only
+`score_ttHZ > 0.60...0.85` scan in steps of 0.01 for `ttHcc_sample` and
+`all_background_samples`; these denser points do not add curves to the mass
+plots. The 0L QCD scan uses a linear 201-point `[0,1]`
+grid with `reference_threshold: null`; no QCD working point is implied. The full
+0L production cache is available at
+`outputs/nn_study_2024_0l_v4/cache/prepared_events.npz` and should be reused
+with `--from-cache`.
+
+The config-driven 0L V4 two-score study scans `score_ttHZ > A` together with
+`score_qcd < B`, stores S/B/Z and group-efficiency matrices, reports the 95%
+and 98% near-optimal plateaus, and evaluates an optional `score_ttjets` cut at
+representative points. Run it alone with:
+
+```bash
+python scripts/run_nn_study.py \
+  --config config/nn_study/nn_study_2024_0l_v4.json \
+  --from-cache \
+  --only score-significance-2d
+```
+
+Regenerate only the configured 0L V4 QCD mass-sculpting plots with:
+
+```bash
+python scripts/run_nn_study.py \
+  --config config/nn_study/nn_study_2024_0l_v4.json \
+  --from-cache \
+  --only mass-sculpting \
+  --mass-sculpting-score score_qcd
+```
+
+Prepare and run V4 from cache with:
+
+```bash
+python scripts/run_nn_study.py \
+  --config config/nn_study/nn_study_2024_1l_v4.json \
+  --prepare-cache
+
+python scripts/run_nn_study.py \
+  --config config/nn_study/nn_study_2024_1l_v4.json \
+  --from-cache
+
+python scripts/run_nn_study.py \
+  --config config/nn_study/nn_study_2024_0l_v4.json \
+  --from-cache --only qcd-score-scan
+```
 
 The actual 1L ntuples contain 12 softmax outputs named:
 

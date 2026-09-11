@@ -6,6 +6,10 @@ from typing import Any
 
 import numpy as np
 
+from tthcc_an.nn_study.analysis_regions import (
+    run_ar_score_distributions,
+    run_conditional_qcd_veto,
+)
 from tthcc_an.nn_study.cache import (
     cache_analysis_branches,
     cache_metadata_path,
@@ -15,8 +19,9 @@ from tthcc_an.nn_study.cache import (
     validate_nn_cache,
     write_nn_cache,
 )
-from tthcc_an.nn_study.config import load_nn_study_config
+from tthcc_an.nn_study.config import NnTruthCategory, load_nn_study_config
 from tthcc_an.nn_study.dataset import NnDataset, load_nn_dataset
+from tthcc_an.nn_study.d_tthz_study import run_d_tthz_study
 from tthcc_an.nn_study.mass_sculpting import run_mass_sculpting
 from tthcc_an.nn_study.metrics import compute_confusion_matrix, compute_pairwise_rocs, normalize_confusion
 from tthcc_an.nn_study.plotting import (
@@ -29,6 +34,7 @@ from tthcc_an.nn_study.plotting import (
 from tthcc_an.nn_study.qcd_score_scan import run_qcd_score_scan
 from tthcc_an.nn_study.reporting import format_summary_text, write_json, write_text
 from tthcc_an.nn_study.score_significance import run_score_significance
+from tthcc_an.nn_study.score_significance_2d import run_score_significance_2d
 from tthcc_an.nn_study.weighting_diagnostics import run_weighting_diagnostics
 
 
@@ -40,6 +46,10 @@ PLOT_CHOICES = (
     "auc",
     "mass-sculpting",
     "score-significance",
+    "score-significance-2d",
+    "score-qcd-fine-truth-split",
+    "ar-score-distributions",
+    "qcd-veto-conditional",
     "qcd-score-scan",
     "weighting-diagnostics",
 )
@@ -69,6 +79,15 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Optional plot groups to produce; summaries are always written.",
     )
+    parser.add_argument(
+        "--mass-sculpting-score",
+        nargs="+",
+        default=None,
+        help=(
+            "Optional score name or branch filter for --only mass-sculpting; "
+            "for example: score_qcd."
+        ),
+    )
     cache_mode = parser.add_mutually_exclusive_group()
     cache_mode.add_argument(
         "--prepare-cache",
@@ -96,10 +115,12 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _truth_yields(config: Any, dataset: NnDataset) -> dict[str, dict[str, Any]]:
+def _truth_yields(
+    truths: list[Any], truth_index: np.ndarray, dataset: NnDataset
+) -> dict[str, dict[str, Any]]:
     yields: dict[str, dict[str, Any]] = {}
-    for index, truth in enumerate(config.truth_categories):
-        mask = dataset.truth_index == index
+    for index, truth in enumerate(truths):
+        mask = truth_index == index
         yields[truth.name] = {
             "label": truth.label,
             "events": int(np.sum(mask)),
@@ -107,6 +128,177 @@ def _truth_yields(config: Any, dataset: NnDataset) -> dict[str, dict[str, Any]]:
             "signed_weight_sum": float(np.sum(dataset.signed_weight[mask])),
         }
     return yields
+
+
+def _score_sum_diagnostics(config: Any, dataset: NnDataset) -> dict[str, Any] | None:
+    if not all(name in dataset.scores for name in config.score_names):
+        return None
+    matrix = dataset.score_matrix(config.score_names)
+    finite_rows = np.all(np.isfinite(matrix), axis=1)
+    sums = np.sum(matrix[finite_rows], axis=1)
+    if sums.size == 0:
+        return {
+            "classes": config.score_names,
+            "finite_rows": 0,
+            "nonfinite_rows": int(matrix.shape[0]),
+            "sum_min": None,
+            "sum_max": None,
+            "max_abs_deviation_from_one": None,
+        }
+    return {
+        "classes": config.score_names,
+        "finite_rows": int(np.sum(finite_rows)),
+        "nonfinite_rows": int(np.sum(~finite_rows)),
+        "sum_min": float(np.min(sums)),
+        "sum_max": float(np.max(sums)),
+        "max_abs_deviation_from_one": float(np.max(np.abs(sums - 1.0))),
+    }
+
+
+def _remap_truth_index(
+    truth_index: np.ndarray, source_names: list[str], selected_names: list[str]
+) -> np.ndarray:
+    remapped = np.full(truth_index.shape, -1, dtype=np.int16)
+    source_index = {name: index for index, name in enumerate(source_names)}
+    for target_index, name in enumerate(selected_names):
+        remapped[truth_index == source_index[name]] = target_index
+    return remapped
+
+
+def _qcd_split_fine_truth(
+    config: Any, dataset: NnDataset
+) -> tuple[list[NnTruthCategory], np.ndarray]:
+    required_masks = {"qcdraw", "wcq", "wqq", "zbb", "zcc", "zqq"}
+    missing_masks = sorted(required_masks - set(dataset.diagnostic_truth_masks))
+    if missing_masks:
+        raise ValueError(
+            "QCD fine-truth split requires diagnostic masks: "
+            + ", ".join(missing_masks)
+        )
+    if "qcd" not in config.truth_names:
+        raise ValueError("QCD fine-truth split requires the merged 'qcd' truth.")
+
+    output_truths = [
+        truth for truth in config.truth_categories if truth.name != "qcd"
+    ]
+    output_index = np.full(dataset.truth_index.shape, -1, dtype=np.int16)
+    old_index = {name: index for index, name in enumerate(config.truth_names)}
+    for new_index, truth in enumerate(output_truths):
+        output_index[dataset.truth_index == old_index[truth.name]] = new_index
+
+    split_definitions = [
+        (
+            NnTruthCategory("qcdraw", "QCD", "qcdraw", "black"),
+            dataset.diagnostic_truth_masks["qcdraw"],
+        ),
+        (
+            NnTruthCategory(
+                "w_hadronic", "W hadronic", "wcq | wqq", "#7F3C8D"
+            ),
+            dataset.diagnostic_truth_masks["wcq"]
+            | dataset.diagnostic_truth_masks["wqq"],
+        ),
+        (
+            NnTruthCategory(
+                "z_hadronic",
+                "Z hadronic",
+                "zbb | zcc | zqq",
+                "#11A579",
+            ),
+            dataset.diagnostic_truth_masks["zbb"]
+            | dataset.diagnostic_truth_masks["zcc"]
+            | dataset.diagnostic_truth_masks["zqq"],
+        ),
+    ]
+    merged_qcd = dataset.truth_index == old_index["qcd"]
+    split_count = np.zeros(dataset.truth_index.shape, dtype=np.int8)
+    split_union = np.zeros(dataset.truth_index.shape, dtype=bool)
+    for _, mask in split_definitions:
+        split_count += mask.astype(np.int8)
+        split_union |= mask
+    if np.any(split_count > 1) or not np.array_equal(split_union, merged_qcd):
+        raise ValueError(
+            "QCD/W/Z-hadronic diagnostic masks do not exclusively reproduce "
+            "the merged qcd truth category."
+        )
+
+    for truth, mask in split_definitions:
+        output_index[mask] = len(output_truths)
+        output_truths.append(truth)
+    return output_truths, output_index
+
+
+def _matrix_payload(matrix: np.ndarray) -> list[list[float]]:
+    return [[float(value) for value in row] for row in matrix]
+
+
+def _score_distribution_payload(config: Any, dataset: NnDataset) -> dict[str, Any]:
+    n_bins = int(config.plot_options.get("score_bins", 20))
+    score_range = [float(value) for value in config.plot_options.get("score_range", [0.0, 1.0])]
+    bins = np.linspace(score_range[0], score_range[1], n_bins + 1)
+    payload: dict[str, Any] = {"bin_edges": bins.tolist(), "scores": {}}
+    for score in config.scores:
+        values = np.asarray(dataset.scores[score.name], dtype=np.float64)
+        categories: dict[str, Any] = {}
+        for index, truth in enumerate(config.prediction_truth_categories):
+            mask = (
+                (dataset.prediction_truth_index == index)
+                & np.isfinite(values)
+                & np.isfinite(dataset.analysis_weight)
+                & (dataset.analysis_weight > 0.0)
+            )
+            hist = np.histogram(
+                values[mask], bins=bins, weights=dataset.analysis_weight[mask]
+            )[0].astype(np.float64)
+            total = float(np.sum(hist))
+            shape = hist / total if total > 0.0 else np.zeros_like(hist)
+            categories[truth.name] = {
+                "weighted_yield_bins": hist.tolist(),
+                "normalized_shape_bins": shape.tolist(),
+                "normalized_shape_integral": (
+                    float(np.sum(shape)) if total > 0.0 else None
+                ),
+            }
+        payload["scores"][score.name] = categories
+    return payload
+
+
+def _coarse_union_validation(config: Any, dataset: NnDataset) -> dict[str, Any]:
+    if not config.uses_distinct_prediction_truth:
+        return {"applicable": False}
+    components = {
+        "ttHZ": ["ttHcc", "ttHbb", "ttZqq", "ttZcc", "ttZbb"],
+        "ttjets": ["ttLF", "ttcj", "ttcc", "tt2c", "ttbj", "ttbb", "tt2b"],
+    }
+    fine_index = {name: index for index, name in enumerate(config.truth_names)}
+    coarse_index = {
+        name: index for index, name in enumerate(config.prediction_truth_names)
+    }
+    results: dict[str, bool] = {}
+    for coarse_name, fine_names in components.items():
+        if coarse_name not in coarse_index or not set(fine_names) <= set(fine_index):
+            continue
+        expected = np.isin(
+            dataset.truth_index, [fine_index[name] for name in fine_names]
+        )
+        observed = dataset.prediction_truth_index == coarse_index[coarse_name]
+        results[coarse_name] = bool(np.array_equal(expected, observed))
+    if "qcd" in coarse_index and dataset.diagnostic_truth_masks:
+        diagnostic_union = np.zeros(dataset.truth_index.shape, dtype=bool)
+        diagnostic_count = np.zeros(dataset.truth_index.shape, dtype=np.int16)
+        for mask in dataset.diagnostic_truth_masks.values():
+            diagnostic_union |= mask
+            diagnostic_count += mask.astype(np.int16)
+        observed = dataset.prediction_truth_index == coarse_index["qcd"]
+        results["qcd"] = bool(np.array_equal(diagnostic_union, observed))
+        results["qcd_subcategories_exclusive"] = bool(
+            np.all(diagnostic_count <= 1)
+        )
+    return {
+        "applicable": True,
+        "coarse_equals_configured_fine_union": results,
+        "all_valid": bool(results) and all(results.values()),
+    }
 
 
 def _auc_validation(pairwise: dict[str, dict[str, Any]], requested: bool) -> dict[str, Any]:
@@ -141,6 +333,10 @@ def _load_config(
 def _prepare_cache(args: argparse.Namespace) -> dict[str, Any]:
     if args.only is not None:
         raise ValueError("--prepare-cache cannot be combined with --only.")
+    if args.mass_sculpting_score is not None:
+        raise ValueError(
+            "--prepare-cache cannot be combined with --mass-sculpting-score."
+        )
     config_without_files = _load_config(args, discover_sample_files=False)
     cache_path = resolve_cache_path(config_without_files, args.cache_path)
     if cache_path.exists() and not args.force:
@@ -201,19 +397,77 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         plot_groups.add("mass-sculpting")
     if args.only is None and config.score_significance.enabled:
         plot_groups.add("score-significance")
+    if args.only is None and config.score_significance_2d.enabled:
+        plot_groups.add("score-significance-2d")
+    if args.only is None and config.score_significance_2d_hierarchical.enabled:
+        plot_groups.add("score-significance-2d")
+    qcd_split_masks = {"qcdraw", "wcq", "wqq", "zbb", "zcc", "zqq"}
+    if (
+        args.only is None
+        and "qcd" in config.all_score_names
+        and qcd_split_masks.issubset(
+            {truth.name for truth in config.diagnostic_truth_categories}
+        )
+    ):
+        plot_groups.add("score-qcd-fine-truth-split")
     if args.only is None and config.qcd_score_scan.enabled:
         plot_groups.add("qcd-score-scan")
+    if args.only is None and config.analysis_regions.enabled:
+        plot_groups.add("ar-score-distributions")
+    if (
+        args.only is None
+        and config.analysis_regions.conditional_qcd_veto.enabled
+    ):
+        plot_groups.add("qcd-veto-conditional")
     if args.only is None and config.weighting_diagnostics.enabled:
         plot_groups.add("weighting-diagnostics")
     if "mass-sculpting" in plot_groups and not config.mass_sculpting.enabled:
         raise ValueError("mass_sculpting is not enabled in this config.")
+    mass_sculpting_score_names: set[str] | None = None
+    if args.mass_sculpting_score is not None:
+        if "mass-sculpting" not in plot_groups:
+            raise ValueError(
+                "--mass-sculpting-score requires the mass-sculpting plot group."
+            )
+        score_by_reference = {
+            reference: scan.score_name
+            for scan in (
+                *config.mass_sculpting.scans,
+                *config.mass_sculpting.summary_scans,
+            )
+            for reference in (scan.score_name, scan.score_branch)
+        }
+        unknown = sorted(set(args.mass_sculpting_score) - set(score_by_reference))
+        if unknown:
+            raise ValueError(
+                "Unknown configured mass-sculpting scores: " + ", ".join(unknown)
+            )
+        mass_sculpting_score_names = {
+            score_by_reference[reference]
+            for reference in args.mass_sculpting_score
+        }
     if (
         "score-significance" in plot_groups
         and not config.score_significance.enabled
     ):
         raise ValueError("score_significance is not enabled in this config.")
+    if (
+        "score-significance-2d" in plot_groups
+        and not config.score_significance_2d.enabled
+    ):
+        raise ValueError("score_significance_2d is not enabled in this config.")
     if "qcd-score-scan" in plot_groups and not config.qcd_score_scan.enabled:
         raise ValueError("qcd_score_scan is not enabled in this config.")
+    if (
+        "ar-score-distributions" in plot_groups
+        and not config.analysis_regions.enabled
+    ):
+        raise ValueError("analysis_regions is not enabled in this config.")
+    if (
+        "qcd-veto-conditional" in plot_groups
+        and not config.analysis_regions.conditional_qcd_veto.enabled
+    ):
+        raise ValueError("conditional_qcd_veto is not enabled in this config.")
     if (
         "weighting-diagnostics" in plot_groups
         and not config.weighting_diagnostics.enabled
@@ -221,6 +475,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         raise ValueError("weighting_diagnostics is not enabled in this config.")
 
     loaded_score_names: list[str] = []
+    if config.uses_distinct_prediction_truth:
+        # V4 score-sum validation is part of every downstream workflow.
+        loaded_score_names.extend(config.score_names)
     if "scores" in plot_groups:
         loaded_score_names.extend(config.all_score_names)
     if plot_groups & {"confusion", "roc", "auc"}:
@@ -230,7 +487,16 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     loaded_analysis_branches: list[str] = []
     if "mass-sculpting" in plot_groups:
         loaded_score_names.extend(
-            scan.score_name for scan in config.mass_sculpting.scans
+            scan.score_name
+            for scan in config.mass_sculpting.scans
+            if mass_sculpting_score_names is None
+            or scan.score_name in mass_sculpting_score_names
+        )
+        loaded_score_names.extend(
+            scan.score_name
+            for scan in config.mass_sculpting.summary_scans
+            if mass_sculpting_score_names is None
+            or scan.score_name in mass_sculpting_score_names
         )
         loaded_analysis_branches.extend(
             variable.branch for variable in config.mass_sculpting.variables
@@ -239,8 +505,39 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         loaded_score_names.extend(
             scan.score_name for scan in config.score_significance.scans
         )
+    if "score-significance-2d" in plot_groups:
+        for settings in (
+            config.score_significance_2d,
+            config.score_significance_2d_hierarchical,
+        ):
+            if not settings.enabled:
+                continue
+            if settings.x_axis is not None:
+                loaded_score_names.append(settings.x_axis.score_name)
+            if settings.y_axis is not None:
+                loaded_score_names.append(settings.y_axis.score_name)
+            if settings.third_cut.score_name is not None:
+                loaded_score_names.append(settings.third_cut.score_name)
+    if "score-qcd-fine-truth-split" in plot_groups:
+        if "qcd" not in config.all_score_names:
+            raise ValueError(
+                "score-qcd-fine-truth-split requires a configured qcd score."
+            )
+        loaded_score_names.append("qcd")
     if "qcd-score-scan" in plot_groups:
         loaded_score_names.append(config.qcd_score_scan.score_name)
+    if "ar-score-distributions" in plot_groups:
+        loaded_score_names.extend(config.score_names)
+        loaded_score_names.extend(config.analysis_discriminants)
+        loaded_score_names.extend(
+            cut.score_name for cut in config.analysis_regions.ar_cuts
+        )
+    if "qcd-veto-conditional" in plot_groups:
+        conditional = config.analysis_regions.conditional_qcd_veto
+        if conditional.tthz_score_name is not None:
+            loaded_score_names.append(conditional.tthz_score_name)
+        if conditional.qcd_score_name is not None:
+            loaded_score_names.append(conditional.qcd_score_name)
     if (
         config.significance_mass_window.enabled
         and plot_groups & {"score-significance", "qcd-score-scan"}
@@ -282,15 +579,69 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         compute_pairwise_rocs(
             config.score_names,
             dataset.scores,
-            dataset.truth_index,
+            dataset.prediction_truth_index,
             dataset.analysis_weight,
             validate_with_sklearn=config.validate_auc_with_sklearn,
         )
         if needs_pairwise
         else {}
     )
+    pairwise_unweighted = (
+        compute_pairwise_rocs(
+            config.score_names,
+            dataset.scores,
+            dataset.prediction_truth_index,
+            np.ones(dataset.prediction_truth_index.shape, dtype=np.float64),
+            validate_with_sklearn=config.validate_auc_with_sklearn,
+        )
+        if needs_pairwise and config.uses_distinct_prediction_truth
+        else {}
+    )
 
     plots: list[str] = []
+    if "score-qcd-fine-truth-split" in plot_groups:
+        split_truths, split_truth_index = _qcd_split_fine_truth(config, dataset)
+        score = next(score for score in config.all_scores if score.name == "qcd")
+        path = plot_dir / "score_fine_truth" / (
+            f"score_qcd__fine_truth__qcd_w_z_split{plot_suffix}"
+        )
+        plot_score_distribution(
+            outpath=path,
+            score=score,
+            values=dataset.scores["qcd"],
+            truth_index=split_truth_index,
+            weights=dataset.analysis_weight,
+            truths=split_truths,
+            config=config,
+            normalize=True,
+            figsize=(7.8, 5.4),
+            legend_columns=3,
+            legend_fontsize=7.5,
+        )
+        plots.append(str(path))
+
+    ar_score_composition_summary: dict[str, Any] | None = None
+    if "ar-score-distributions" in plot_groups:
+        ar_plots, ar_score_composition_summary = run_ar_score_distributions(
+            config=config,
+            dataset=dataset,
+            plot_dir=plot_dir,
+            summary_dir=summary_dir,
+            plot_suffix=plot_suffix,
+        )
+        plots.extend(ar_plots)
+
+    qcd_veto_conditional_summary: dict[str, Any] | None = None
+    if "qcd-veto-conditional" in plot_groups:
+        conditional_plots, qcd_veto_conditional_summary = (
+            run_conditional_qcd_veto(
+                config=config,
+                dataset=dataset,
+                summary_dir=summary_dir,
+            )
+        )
+        plots.extend(conditional_plots)
+
     if "scores" in plot_groups:
         for score in config.all_scores:
             shape_path = plot_dir / f"score_{score.name}{plot_suffix}"
@@ -298,59 +649,167 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             common = {
                 "score": score,
                 "values": dataset.scores[score.name],
-                "truth_index": dataset.truth_index,
+                "truth_index": dataset.prediction_truth_index,
                 "weights": dataset.analysis_weight,
-                "truths": config.truth_categories,
+                "truths": config.prediction_truth_categories,
                 "config": config,
             }
             plot_score_distribution(outpath=shape_path, normalize=True, **common)
             plot_score_distribution(outpath=yield_path, normalize=False, **common)
             plots.extend([str(shape_path), str(yield_path)])
 
-    confusion_events = 0
-    if "confusion" in plot_groups:
-        confusion_matrix, confusion_events = compute_confusion_matrix(
-            dataset.score_matrix(config.score_names),
-            dataset.truth_index,
-            dataset.analysis_weight,
-            len(config.scores),
-        )
-        for normalization, filename in [
-            ("truth", f"confusion_matrix_truth{plot_suffix}"),
-            ("prediction", f"confusion_matrix_pred{plot_suffix}"),
-        ]:
-            path = plot_dir / filename
-            plot_confusion_matrix(
-                outpath=path,
-                matrix=normalize_confusion(confusion_matrix, normalization),
-                truths=config.truth_categories,
-                scores=config.scores,
-                normalization=normalization,
-                config=config,
+        if config.uses_distinct_prediction_truth:
+            fine_truth_dir = plot_dir / "score_fine_truth"
+            for score in config.scores:
+                for normalize, suffix in [(True, ""), (False, "__yield")]:
+                    path = fine_truth_dir / (
+                        f"score_{score.name}__fine_truth{suffix}{plot_suffix}"
+                    )
+                    plot_score_distribution(
+                        outpath=path,
+                        score=score,
+                        values=dataset.scores[score.name],
+                        truth_index=dataset.truth_index,
+                        weights=dataset.analysis_weight,
+                        truths=config.truth_categories,
+                        config=config,
+                        normalize=normalize,
+                        figsize=(7.2, 5.2),
+                        legend_columns=3,
+                        legend_fontsize=8.0,
+                    )
+                    plots.append(str(path))
+
+        if config.uses_distinct_prediction_truth and "ttHZ" in dataset.scores:
+            fine_components = ["ttHcc", "ttHbb", "ttZcc", "ttZbb", "ttZqq"]
+            truth_by_name = {truth.name: truth for truth in config.truth_categories}
+            component_truths = [truth_by_name[name] for name in fine_components]
+            component_index = _remap_truth_index(
+                dataset.truth_index, config.truth_names, fine_components
             )
-            plots.append(str(path))
+            composition_dir = plot_dir / "score_composition"
+            for normalize, suffix in [(True, ""), (False, "__yield")]:
+                path = composition_dir / (
+                    f"score_ttHZ__fine_ttHZ_components{suffix}{plot_suffix}"
+                )
+                plot_score_distribution(
+                    outpath=path,
+                    score=next(score for score in config.scores if score.name == "ttHZ"),
+                    values=dataset.scores["ttHZ"],
+                    truth_index=component_index,
+                    weights=dataset.analysis_weight,
+                    truths=component_truths,
+                    config=config,
+                    normalize=normalize,
+                )
+                plots.append(str(path))
+
+    confusion_events = 0
+    confusion_summary: dict[str, Any] = {}
+    if "confusion" in plot_groups:
+        weightings = [("analysis_weighted", dataset.analysis_weight)]
+        if config.uses_distinct_prediction_truth:
+            weightings.append(
+                (
+                    "unweighted",
+                    np.ones(dataset.prediction_truth_index.shape, dtype=np.float64),
+                )
+            )
+        for weighting_name, confusion_weights in weightings:
+            confusion_matrix, valid_events = compute_confusion_matrix(
+                dataset.score_matrix(config.score_names),
+                dataset.prediction_truth_index,
+                confusion_weights,
+                len(config.scores),
+            )
+            if weighting_name == "analysis_weighted":
+                confusion_events = valid_events
+            confusion_summary[weighting_name] = {
+                "events": valid_events,
+                "raw_matrix": _matrix_payload(confusion_matrix),
+                "truth_normalized": _matrix_payload(
+                    normalize_confusion(confusion_matrix, "truth")
+                ),
+                "prediction_normalized": _matrix_payload(
+                    normalize_confusion(confusion_matrix, "prediction")
+                ),
+            }
+            for normalization, short_name in [
+                ("truth", "truth"),
+                ("prediction", "pred"),
+            ]:
+                filename = (
+                    f"coarse_confusion_matrix_{short_name}__{weighting_name}{plot_suffix}"
+                    if config.uses_distinct_prediction_truth
+                    else f"confusion_matrix_{short_name}{plot_suffix}"
+                )
+                path = plot_dir / filename
+                plot_confusion_matrix(
+                    outpath=path,
+                    matrix=normalize_confusion(confusion_matrix, normalization),
+                    truths=config.prediction_truth_categories,
+                    scores=config.scores,
+                    normalization=normalization,
+                    config=config,
+                    title=(
+                        f"Coarse confusion matrix ({weighting_name.replace('_', ' ')})"
+                        if config.uses_distinct_prediction_truth
+                        else None
+                    ),
+                )
+                plots.append(str(path))
 
     if "roc" in plot_groups:
-        truths_by_name = {truth.name: truth for truth in config.truth_categories}
+        truths_by_name = {
+            truth.name: truth for truth in config.prediction_truth_categories
+        }
         scores_by_name = {score.name: score for score in config.scores}
-        for signal_name, backgrounds in pairwise.items():
-            if not backgrounds:
-                continue
-            path = plot_dir / f"roc_{signal_name}{plot_suffix}"
-            plot_pairwise_roc(
-                outpath=path,
-                signal=scores_by_name[signal_name],
-                background_results=backgrounds,
-                truths_by_name=truths_by_name,
-                config=config,
-            )
-            plots.append(str(path))
+        roc_sets = [("analysis_weighted", pairwise)]
+        if config.uses_distinct_prediction_truth:
+            roc_sets.append(("unweighted", pairwise_unweighted))
+        for weighting_name, roc_results in roc_sets:
+            for signal_name, backgrounds in roc_results.items():
+                if not backgrounds:
+                    continue
+                filename = (
+                    f"coarse_roc_{signal_name}__{weighting_name}{plot_suffix}"
+                    if config.uses_distinct_prediction_truth
+                    else f"roc_{signal_name}{plot_suffix}"
+                )
+                path = plot_dir / filename
+                plot_pairwise_roc(
+                    outpath=path,
+                    signal=scores_by_name[signal_name],
+                    background_results=backgrounds,
+                    truths_by_name=truths_by_name,
+                    config=config,
+                )
+                plots.append(str(path))
 
     if "auc" in plot_groups:
-        auc_matrix = build_auc_matrix(config.score_names, pairwise)
-        path = plot_dir / f"pairwise_auc_matrix{plot_suffix}"
-        plot_auc_matrix(outpath=path, auc_matrix=auc_matrix, scores=config.scores, config=config)
-        plots.append(str(path))
+        auc_sets = [("analysis_weighted", pairwise)]
+        if config.uses_distinct_prediction_truth:
+            auc_sets.append(("unweighted", pairwise_unweighted))
+        for weighting_name, auc_results in auc_sets:
+            auc_matrix = build_auc_matrix(config.score_names, auc_results)
+            filename = (
+                f"coarse_pairwise_auc_matrix__{weighting_name}{plot_suffix}"
+                if config.uses_distinct_prediction_truth
+                else f"pairwise_auc_matrix{plot_suffix}"
+            )
+            path = plot_dir / filename
+            plot_auc_matrix(
+                outpath=path,
+                auc_matrix=auc_matrix,
+                scores=config.scores,
+                config=config,
+                title=(
+                    f"Coarse pairwise AUC ({weighting_name.replace('_', ' ')})"
+                    if config.uses_distinct_prediction_truth
+                    else None
+                ),
+            )
+            plots.append(str(path))
 
     mass_sculpting_summary: dict[str, Any] | None = None
     if "mass-sculpting" in plot_groups:
@@ -360,6 +819,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             plot_dir=plot_dir,
             summary_dir=summary_dir,
             plot_suffix=plot_suffix,
+            selected_score_names=mass_sculpting_score_names,
         )
         plots.extend(mass_plots)
 
@@ -373,6 +833,34 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             plot_suffix=plot_suffix,
         )
         plots.extend(significance_plots)
+
+    score_significance_2d_summary: dict[str, Any] | None = None
+    score_significance_2d_hierarchical_summary: dict[str, Any] | None = None
+    if "score-significance-2d" in plot_groups:
+        if config.score_significance_2d.enabled:
+            significance_2d_plots, score_significance_2d_summary = (
+                run_score_significance_2d(
+                    config=config,
+                    dataset=dataset,
+                    plot_dir=plot_dir,
+                    summary_dir=summary_dir,
+                    plot_suffix=plot_suffix,
+                )
+            )
+            plots.extend(significance_2d_plots)
+        if config.score_significance_2d_hierarchical.enabled:
+            hierarchical_plots, score_significance_2d_hierarchical_summary = (
+                run_score_significance_2d(
+                    config=config,
+                    dataset=dataset,
+                    plot_dir=plot_dir,
+                    summary_dir=summary_dir,
+                    plot_suffix=plot_suffix,
+                    settings=config.score_significance_2d_hierarchical,
+                    summary_stem="score_significance_2d_hierarchical",
+                )
+            )
+            plots.extend(hierarchical_plots)
 
     qcd_score_scan_summary: dict[str, Any] | None = None
     if "qcd-score-scan" in plot_groups:
@@ -396,7 +884,29 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         )
         plots.extend(diagnostics_plots)
 
-    truth_yields = _truth_yields(config, dataset)
+    d_tthz_summary: dict[str, Any] | None = None
+    if args.only is None and "D_ttHZ" in dataset.scores:
+        d_tthz_plots, d_tthz_summary = run_d_tthz_study(
+            config=config,
+            dataset=dataset,
+            plot_dir=plot_dir,
+            summary_dir=summary_dir,
+            plot_suffix=plot_suffix,
+            score_significance_summary=score_significance_summary,
+            score_significance_2d_summary=score_significance_2d_summary,
+            hierarchical_summary=score_significance_2d_hierarchical_summary,
+            mass_sculpting_summary=mass_sculpting_summary,
+        )
+        plots.extend(d_tthz_plots)
+
+    truth_yields = _truth_yields(
+        config.truth_categories, dataset.truth_index, dataset
+    )
+    prediction_truth_yields = _truth_yields(
+        config.prediction_truth_categories,
+        dataset.prediction_truth_index,
+        dataset,
+    )
     pairwise_auc = {
         signal: {background: float(result.auc) for background, result in backgrounds.items()}
         for signal, backgrounds in pairwise.items()
@@ -413,6 +923,61 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             for background, result in backgrounds.items()
         }
         for signal, backgrounds in pairwise.items()
+    }
+    pairwise_auc_unweighted = {
+        signal: {
+            background: float(result.auc)
+            for background, result in backgrounds.items()
+        }
+        for signal, backgrounds in pairwise_unweighted.items()
+    }
+    pairwise_details_unweighted = {
+        signal: {
+            background: {
+                "auc": float(result.auc),
+                "sklearn_auc": result.sklearn_auc,
+                "n_signal": result.n_signal,
+                "n_background": result.n_background,
+                "zero_denominator_events": result.zero_denominator_events,
+            }
+            for background, result in backgrounds.items()
+        }
+        for signal, backgrounds in pairwise_unweighted.items()
+    }
+    diagnostic_truth_yields = {
+        name: {
+            "events": int(np.sum(mask)),
+            "analysis_weight_sum": float(np.sum(dataset.analysis_weight[mask])),
+            "signed_weight_sum": float(np.sum(dataset.signed_weight[mask])),
+        }
+        for name, mask in dataset.diagnostic_truth_masks.items()
+    }
+    truth_coverage = {
+        "selected": dataset.totals["events_selected"],
+        "fine": {
+            "classified": dataset.totals.get("fine_events_classified", dataset.totals["events_classified"]),
+            "unclassified": dataset.totals.get("fine_events_unclassified", dataset.totals["events_unclassified"]),
+            "multiply_assigned": dataset.totals.get("fine_events_multiply_assigned", 0),
+        },
+        "coarse": {
+            "classified": dataset.totals.get("coarse_events_classified", dataset.totals["events_classified"]),
+            "unclassified": dataset.totals.get("coarse_events_unclassified", dataset.totals["events_unclassified"]),
+            "multiply_assigned": dataset.totals.get("coarse_events_multiply_assigned", 0),
+        },
+        "per_sample_diagnostics": [
+            {
+                "name": sample["name"],
+                "fine_unclassified_diagnostics": sample.get(
+                    "fine_unclassified_diagnostics", []
+                ),
+                "coarse_unclassified_diagnostics": sample.get(
+                    "coarse_unclassified_diagnostics", []
+                ),
+            }
+            for sample in dataset.sample_summaries
+            if sample.get("fine_events_unclassified", sample["events_unclassified"])
+            or sample.get("coarse_events_unclassified", sample["events_unclassified"])
+        ],
     }
     summary: dict[str, Any] = {
         "channel": config.channel,
@@ -440,11 +1005,17 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             else "Configured selection applied after loading the produced ntuple."
         ),
         "labels": config.truth_names,
+        "fine_truth_categories": config.truth_names,
+        "prediction_truth_categories": config.prediction_truth_names,
         "score_classes": config.score_names,
         "score_branches": {score.name: score.branch for score in config.scores},
         "auxiliary_scores": [score.name for score in config.auxiliary_scores],
         "auxiliary_score_branches": {
             score.name: score.branch for score in config.auxiliary_scores
+        },
+        "analysis_discriminants": {
+            name: next(score.branch for score in config.all_scores if score.name == name)
+            for name in config.analysis_discriminants
         },
         "loaded_score_branches": {
             score.name: score.branch
@@ -454,13 +1025,33 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "plot_groups": sorted(plot_groups),
         "plot_format": plot_format,
         "truth_definitions": {truth.name: truth.expression for truth in config.truth_categories},
+        "prediction_truth_definitions": {
+            truth.name: truth.expression
+            for truth in config.prediction_truth_categories
+        },
+        "diagnostic_truth_definitions": {
+            truth.name: truth.expression
+            for truth in config.diagnostic_truth_categories
+        },
         "analysis_branches_retained": list(dataset.analysis_columns),
         "truth_yields": truth_yields,
+        "prediction_truth_yields": prediction_truth_yields,
+        "diagnostic_truth_yields": diagnostic_truth_yields,
+        "truth_coverage": truth_coverage,
+        "score_sum_diagnostics": _score_sum_diagnostics(config, dataset),
+        "native_score_histograms": (
+            _score_distribution_payload(config, dataset)
+            if all(name in dataset.scores for name in config.score_names)
+            else None
+        ),
+        "coarse_union_validation": _coarse_union_validation(config, dataset),
         "available_truth_categories": [
             name for name, entry in truth_yields.items() if entry["events"] > 0
         ],
         "pairwise_auc": pairwise_auc,
         "pairwise_details": pairwise_details,
+        "pairwise_auc_unweighted": pairwise_auc_unweighted,
+        "pairwise_details_unweighted": pairwise_details_unweighted,
         "auc_convention": (
             "Standard ROC AUC: integral of signal efficiency (TPR) over background "
             "efficiency (FPR). ROC plots display x=signal efficiency and y=background efficiency."
@@ -469,10 +1060,24 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             pairwise,
             config.validate_auc_with_sklearn and needs_pairwise,
         ),
+        "auc_validation_unweighted": _auc_validation(
+            pairwise_unweighted,
+            config.validate_auc_with_sklearn
+            and needs_pairwise
+            and config.uses_distinct_prediction_truth,
+        ),
         "confusion_events": confusion_events,
+        "confusion_matrices": confusion_summary,
         "mass_sculpting": mass_sculpting_summary,
         "score_significance": score_significance_summary,
+        "score_significance_2d": score_significance_2d_summary,
+        "score_significance_2d_hierarchical": (
+            score_significance_2d_hierarchical_summary
+        ),
+        "D_ttHZ_study": d_tthz_summary,
         "qcd_score_scan": qcd_score_scan_summary,
+        "ar_score_composition": ar_score_composition_summary,
+        "qcd_veto_conditional": qcd_veto_conditional_summary,
         "weighting_diagnostics": weighting_diagnostics_summary,
         "normalization": {
             "lumi_fb": config.lumi_fb,
@@ -497,6 +1102,11 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 "every other selected MC event is background; both inclusive and "
                 "configured mass-window scans are retained"
             ),
+            "score_significance_2d": (
+                "analysis-weighted S/sqrt(S+B) for two simultaneous score cuts; "
+                "one fine truth category is signal and every other selected MC "
+                "event is background"
+            ),
             "qcd_score_scan": "analysis-weighted expected yields and weighted efficiencies",
             "weighting_diagnostics": (
                 "parallel analysis-weighted and unweighted diagnostics; exact training "
@@ -512,9 +1122,60 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "number_of_events_selected": dataset.totals["events_selected"],
         "number_of_events_classified": dataset.totals["events_classified"],
         "number_of_events_unclassified": dataset.totals["events_unclassified"],
+        "number_of_fine_events_multiply_assigned": dataset.totals.get(
+            "fine_events_multiply_assigned", 0
+        ),
+        "number_of_coarse_events_classified": dataset.totals.get(
+            "coarse_events_classified", dataset.totals["events_classified"]
+        ),
+        "number_of_coarse_events_unclassified": dataset.totals.get(
+            "coarse_events_unclassified", dataset.totals["events_unclassified"]
+        ),
+        "number_of_coarse_events_multiply_assigned": dataset.totals.get(
+            "coarse_events_multiply_assigned", 0
+        ),
         "samples": dataset.sample_summaries,
         "plots": plots,
     }
+    if config.uses_distinct_prediction_truth:
+        write_json(
+            summary_dir / "truth_coverage.json",
+            {
+                "fine_truth_definitions": summary["truth_definitions"],
+                "coarse_truth_definitions": summary[
+                    "prediction_truth_definitions"
+                ],
+                "diagnostic_truth_definitions": summary[
+                    "diagnostic_truth_definitions"
+                ],
+                "coverage": truth_coverage,
+                "coarse_union_validation": summary[
+                    "coarse_union_validation"
+                ],
+                "fine_truth_yields": truth_yields,
+                "coarse_truth_yields": prediction_truth_yields,
+                "diagnostic_truth_yields": diagnostic_truth_yields,
+            },
+        )
+        if confusion_summary:
+            write_json(
+                summary_dir / "coarse_confusion.json",
+                {
+                    "classes": config.prediction_truth_names,
+                    "matrices": confusion_summary,
+                    "prediction": "argmax of native V4 score branches",
+                },
+            )
+        if pairwise or pairwise_unweighted:
+            write_json(
+                summary_dir / "coarse_roc_auc.json",
+                {
+                    "classes": config.prediction_truth_names,
+                    "analysis_weighted": pairwise_details,
+                    "unweighted": pairwise_details_unweighted,
+                    "discriminator": "D(A,B) = score_A / (score_A + score_B)",
+                },
+            )
     write_json(config.outdir / "nn_study_summary.json", summary)
     write_text(config.outdir / "nn_study_summary.txt", format_summary_text(summary))
     return summary

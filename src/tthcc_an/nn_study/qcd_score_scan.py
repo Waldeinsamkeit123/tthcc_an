@@ -5,9 +5,12 @@ from typing import Any
 
 import numpy as np
 
+from tthcc_an.nn_study.analysis_regions import qcd_veto_threshold
 from tthcc_an.nn_study.config import NnQcdScoreGroup, NnStudyConfig
 from tthcc_an.nn_study.dataset import NnDataset
 from tthcc_an.nn_study.plotting import (
+    plot_qcd_analysis_region_distribution,
+    plot_qcd_veto_distribution,
     plot_qcd_efficiencies,
     plot_qcd_expected_yields,
     plot_qcd_relative_significance,
@@ -24,6 +27,61 @@ from tthcc_an.nn_study.score_significance import (
     mark_mass_window_result,
     mass_window_suffix,
 )
+
+
+def _qcd_region_visualization_bins(veto_threshold: float | None) -> np.ndarray:
+    if veto_threshold is None:
+        bins = np.concatenate(
+            (
+                np.arange(0, 21, dtype=np.float64) / 100.0,
+                np.arange(25, 101, 5, dtype=np.float64) / 100.0,
+            )
+        )
+    else:
+        bins = np.concatenate(
+            (
+                np.arange(0, 21, dtype=np.float64) * 0.005,
+                np.arange(15, 101, 5, dtype=np.float64) / 100.0,
+            )
+        )
+    widths = np.diff(bins)
+    old_binning_valid = (
+        veto_threshold is None
+        and bins.size == 37
+        and np.allclose(widths[:20], 0.01)
+        and np.allclose(widths[20:], 0.05)
+        and np.count_nonzero(bins == 0.20) == 1
+    )
+    veto_binning_valid = (
+        veto_threshold is not None
+        and np.isclose(veto_threshold, 0.10, rtol=0.0, atol=1e-12)
+        and bins.size == 39
+        and np.allclose(widths[:20], 0.005)
+        and np.allclose(widths[20:], 0.05)
+        and np.count_nonzero(bins == veto_threshold) == 1
+    )
+    if not (
+        np.unique(bins).size == bins.size
+        and (old_binning_valid or veto_binning_valid)
+    ):
+        raise ValueError("Invalid dedicated QCD region-visualization binning.")
+    return bins
+
+
+def _normalized_variable_bin_density(
+    histogram: np.ndarray, widths: np.ndarray
+) -> np.ndarray:
+    histogram = np.asarray(histogram, dtype=np.float64)
+    widths = np.asarray(widths, dtype=np.float64)
+    if histogram.shape != widths.shape or np.any(widths <= 0.0):
+        raise ValueError("Histogram and positive bin widths must have equal shape.")
+    integral = float(np.sum(histogram))
+    density = histogram / (integral * widths) if integral > 0.0 else np.zeros_like(histogram)
+    if integral > 0.0 and not np.isclose(
+        np.sum(density * widths), 1.0, rtol=0.0, atol=1e-12
+    ):
+        raise ValueError("Variable-bin density is not globally normalized.")
+    return density
 
 
 def _group_mask(
@@ -84,7 +142,12 @@ def _format_summary(payload: dict[str, Any]) -> str:
             f"  score range: {working_point['score_range'][0]:g} to "
             f"{working_point['score_range'][1]:g}",
             f"  logarithmic bins: {working_point['bins']}",
-            f"  reference threshold: {working_point['reference_threshold']:g}",
+            "  reference threshold: "
+            + (
+                "none"
+                if working_point["reference_threshold"] is None
+                else f"{working_point['reference_threshold']:g}"
+            ),
             f"  rejected side: {working_point['rejected_side']}",
         ]
     )
@@ -231,14 +294,23 @@ def run_qcd_score_scan(
     if not np.any(eligible):
         raise ValueError("QCD-score scan has no finite-score, finite-weight events.")
 
+    base_thresholds = (
+        np.linspace(
+            settings.scan_min,
+            settings.scan_max,
+            settings.scan_points,
+        )
+        if settings.scan_scale == "linear"
+        else np.logspace(
+            np.log10(settings.scan_min),
+            np.log10(settings.scan_max),
+            settings.scan_points,
+        )
+    )
     thresholds = np.unique(
         np.concatenate(
             [
-                np.logspace(
-                    np.log10(settings.scan_min),
-                    np.log10(settings.scan_max),
-                    settings.scan_points,
-                ),
+                base_thresholds,
                 np.asarray(settings.candidate_thresholds, dtype=np.float64),
             ]
         )
@@ -425,22 +497,49 @@ def run_qcd_score_scan(
             }
         candidate_rows.append(row)
 
-    log_bins = np.linspace(
-        settings.distribution_log10_range[0],
-        settings.distribution_log10_range[1],
-        settings.distribution_bins + 1,
+    distribution_bins = (
+        np.linspace(
+            settings.scan_min,
+            settings.scan_max,
+            settings.distribution_bins + 1,
+        )
+        if settings.scan_scale == "linear"
+        else np.linspace(
+            settings.distribution_log10_range[0],
+            settings.distribution_log10_range[1],
+            settings.distribution_bins + 1,
+        )
     )
     histograms: dict[str, np.ndarray] = {}
     for name in ("ttHcc", "qcd", "ttX"):
-        positive = group_masks[name] & (score > 0.0)
+        positive = group_masks[name] & (
+            np.ones(score.shape, dtype=bool)
+            if settings.scan_scale == "linear"
+            else score > 0.0
+        )
+        distribution_values = (
+            score[positive]
+            if settings.scan_scale == "linear"
+            else np.log10(score[positive])
+        )
         histograms[name] = np.histogram(
-            np.log10(score[positive]), bins=log_bins, weights=weights[positive]
+            distribution_values,
+            bins=distribution_bins,
+            weights=weights[positive],
         )[0].astype(np.float64)
 
-    working_point_bins = np.geomspace(
-        settings.working_point_score_range[0],
-        settings.working_point_score_range[1],
-        settings.working_point_bins + 1,
+    working_point_bins = (
+        np.linspace(
+            settings.working_point_score_range[0],
+            settings.working_point_score_range[1],
+            settings.working_point_bins + 1,
+        )
+        if settings.working_point_scale == "linear"
+        else np.geomspace(
+            settings.working_point_score_range[0],
+            settings.working_point_score_range[1],
+            settings.working_point_bins + 1,
+        )
     )
     working_point_yields: dict[str, np.ndarray] = {}
     working_point_shapes: dict[str, np.ndarray] = {}
@@ -460,9 +559,26 @@ def run_qcd_score_scan(
             working_point_shapes[group.name] = np.zeros_like(histogram)
             normalized_integrals[group.name] = None
 
+    veto_threshold = qcd_veto_threshold(config)
+    analysis_region_bins = _qcd_region_visualization_bins(veto_threshold)
+    analysis_region_widths = np.diff(analysis_region_bins)
+    analysis_region_densities: dict[str, np.ndarray] = {}
+    for group in settings.distribution_groups:
+        mask = _group_mask(config, dataset, group) & eligible
+        histogram = np.histogram(
+            score[mask], bins=analysis_region_bins, weights=weights[mask]
+        )[0].astype(np.float64)
+        analysis_region_densities[group.name] = _normalized_variable_bin_density(
+            histogram, analysis_region_widths
+        )
+
     qcd_plot_dir = plot_dir / "qcd_score_scan"
     plot_paths = {
-        "score_distribution": qcd_plot_dir / f"log10_score_qcd{plot_suffix}",
+        "score_distribution": qcd_plot_dir / (
+            f"score_qcd{plot_suffix}"
+            if settings.scan_scale == "linear"
+            else f"log10_score_qcd{plot_suffix}"
+        ),
         "expected_yields": qcd_plot_dir / f"expected_yield_vs_cut{plot_suffix}",
         "efficiencies": qcd_plot_dir / f"efficiency_vs_cut{plot_suffix}",
         "roc_like": qcd_plot_dir / f"qcd_efficiency_vs_tthcc_efficiency{plot_suffix}",
@@ -470,6 +586,9 @@ def run_qcd_score_scan(
         "relative_significance": qcd_plot_dir / f"relative_significance_improvement_vs_cut{plot_suffix}",
         "working_point_distribution": qcd_plot_dir / f"qcd_score_distribution{plot_suffix}",
         "working_point_distribution_yield": qcd_plot_dir / f"qcd_score_distribution__yield{plot_suffix}",
+        "analysis_region_distribution": qcd_plot_dir / (
+            f"qcd_score_distribution__analysis_regions{plot_suffix}"
+        ),
     }
     if score_significance is not None:
         plot_paths["significance_s_over_sqrt_s_plus_b"] = qcd_plot_dir / (
@@ -485,15 +604,17 @@ def run_qcd_score_scan(
         )
     plot_qcd_score_distribution(
         outpath=plot_paths["score_distribution"],
-        bins=log_bins,
+        bins=distribution_bins,
         histograms=histograms,
         groups=settings.groups,
+        xscale="linear",
     )
     plot_qcd_expected_yields(
         outpath=plot_paths["expected_yields"],
         thresholds=thresholds,
         yields={name: np.asarray(group_results[name]["weighted_yield_after_cut"]) for name in ("ttHcc", "qcd", "ttX")},
         groups=settings.groups,
+        xscale=settings.scan_scale,
     )
     tthcc_efficiency = np.asarray(group_results["ttHcc"]["weighted_efficiency"])
     qcd_efficiency = np.asarray(group_results["qcd"]["weighted_efficiency"])
@@ -503,6 +624,7 @@ def run_qcd_score_scan(
         tthcc_efficiency=tthcc_efficiency,
         qcd_efficiency=qcd_efficiency,
         groups=settings.groups,
+        xscale=settings.scan_scale,
     )
     plot_qcd_roc_like(
         outpath=plot_paths["roc_like"],
@@ -514,12 +636,14 @@ def run_qcd_score_scan(
         outpath=plot_paths["qcd_to_ttX"],
         thresholds=thresholds,
         ratio=_as_plot_array(qcd_to_ttx),
+        xscale=settings.scan_scale,
     )
     plot_qcd_relative_significance(
         outpath=plot_paths["relative_significance"],
         thresholds=thresholds,
         qcd_only=_as_plot_array(relative_qcd),
         qcd_plus_ttx=_as_plot_array(relative_qcd_ttx),
+        xscale=settings.scan_scale,
     )
     if score_significance is not None:
         truths_by_name = {
@@ -538,7 +662,7 @@ def run_qcd_score_scan(
             },
             score_branch=settings.score_branch,
             direction=settings.direction,
-            xscale="log",
+            xscale=settings.scan_scale,
             candidate_thresholds=settings.candidate_thresholds,
         )
     if mass_window_score_significance is not None:
@@ -560,7 +684,7 @@ def run_qcd_score_scan(
             },
             score_branch=settings.score_branch,
             direction=settings.direction,
-            xscale="log",
+            xscale=settings.scan_scale,
             candidate_thresholds=settings.candidate_thresholds,
             selection_label=mass_window_score_significance["mass_window"][
                 "boundary_semantics"
@@ -573,6 +697,7 @@ def run_qcd_score_scan(
         groups=settings.distribution_groups,
         reference_threshold=settings.reference_threshold,
         normalize=True,
+        xscale=settings.working_point_scale,
     )
     plot_qcd_working_point_distribution(
         outpath=plot_paths["working_point_distribution_yield"],
@@ -581,7 +706,25 @@ def run_qcd_score_scan(
         groups=settings.distribution_groups,
         reference_threshold=settings.reference_threshold,
         normalize=False,
+        xscale=settings.working_point_scale,
     )
+    if veto_threshold is None:
+        plot_qcd_analysis_region_distribution(
+            outpath=plot_paths["analysis_region_distribution"],
+            bins=analysis_region_bins,
+            histograms=analysis_region_densities,
+            groups=settings.distribution_groups,
+            ar_upper=0.10,
+            vr_upper=0.20,
+        )
+    else:
+        plot_qcd_veto_distribution(
+            outpath=plot_paths["analysis_region_distribution"],
+            bins=analysis_region_bins,
+            histograms=analysis_region_densities,
+            groups=settings.distribution_groups,
+            veto_threshold=veto_threshold,
+        )
 
     weighted_monotonic = all(
         _nondecreasing(group_results[name]["weighted_yield_after_cut"])
@@ -643,14 +786,16 @@ def run_qcd_score_scan(
             "nonpositive_count": int(np.sum(finite_score & (score <= 0.0))),
             "finite_min": float(np.min(finite_values)),
             "finite_max": float(np.max(finite_values)),
+            "distribution_axis": settings.scan_scale,
+            "distribution_range": [settings.scan_min, settings.scan_max],
+            "distribution_bins": settings.distribution_bins,
             "log10_distribution_range": list(settings.distribution_log10_range),
-            "log10_distribution_bins": settings.distribution_bins,
         },
         "working_point_distribution": {
             "score_range": list(settings.working_point_score_range),
             "bins": settings.working_point_bins,
             "bin_edges": working_point_bins.tolist(),
-            "binning": "Logarithmic edges in linear score_qcd.",
+            "binning": f"{settings.working_point_scale.capitalize()} edges in score_qcd.",
             "normalization": (
                 "Each non-empty displayed group is independently normalized to unit "
                 "weighted integral over the plotted score range."
@@ -660,8 +805,16 @@ def run_qcd_score_scan(
             "reference_threshold_semantics": (
                 "Visualization setting only; not a selected final working point."
             ),
-            "kept_side": "score_qcd < reference_threshold",
-            "rejected_side": "score_qcd > reference_threshold",
+            "kept_side": (
+                "not visualized"
+                if settings.reference_threshold is None
+                else "score_qcd < reference_threshold"
+            ),
+            "rejected_side": (
+                "not visualized"
+                if settings.reference_threshold is None
+                else "score_qcd > reference_threshold"
+            ),
             "groups": [
                 {
                     "name": group.name,
@@ -675,11 +828,41 @@ def run_qcd_score_scan(
                 for group in settings.distribution_groups
             ],
         },
+        "qcd_veto_visualization": {
+            "plot": str(plot_paths["analysis_region_distribution"]),
+            "role": (
+                "legacy AR/VR visualization"
+                if veto_threshold is None
+                else "standalone QCD veto"
+            ),
+            "veto_threshold": veto_threshold,
+            "accepted_side": (
+                None if veto_threshold is None else "score_qcd < qcd_veto_threshold"
+            ),
+            "rejected_side": (
+                None if veto_threshold is None else "score_qcd >= qcd_veto_threshold"
+            ),
+            "bin_edges": analysis_region_bins.tolist(),
+            "low_score_bin_width": (
+                None if veto_threshold is None else 0.005
+            ),
+            "high_score_bin_width": (
+                None if veto_threshold is None else 0.05
+            ),
+            "normalization": (
+                "One global weighted normalization per group over [0, 1], followed "
+                "by division by each variable bin width. Both panels show slices of "
+                "the same normalized-density histogram."
+            ),
+            "contains_ar_or_vr_labels": False if veto_threshold is not None else True,
+        },
         "candidate_thresholds": settings.candidate_thresholds,
         "scan": {
             "configured_min": settings.scan_min,
             "configured_max": settings.scan_max,
             "configured_log_points": settings.scan_points,
+            "configured_points": settings.scan_points,
+            "scale": settings.scan_scale,
             "thresholds": thresholds.tolist(),
             "groups": group_results,
             "qcd_to_ttX": qcd_to_ttx,
@@ -703,11 +886,16 @@ def run_qcd_score_scan(
             "event_counts_monotonic": count_monotonic,
             "weighted_yields_monotonic": weighted_monotonic,
             "efficiencies_in_unit_interval": efficiencies_valid,
-            "working_point_bin_edges_positive": bool(
+            "working_point_bin_edges_positive": bool(np.all(working_point_bins > 0.0)),
+            "working_point_bin_edges_valid_for_scale": bool(
                 np.all(working_point_bins > 0.0)
+                if settings.working_point_scale == "log"
+                else np.all(working_point_bins >= 0.0)
             ),
             "working_point_histograms_normalized": normalized_shapes_valid,
-            "working_point_rejected_side_is_high_score": True,
+            "working_point_rejected_side_is_high_score": (
+                None if settings.reference_threshold is None else True
+            ),
             "score_significance": (
                 None
                 if score_significance is None
