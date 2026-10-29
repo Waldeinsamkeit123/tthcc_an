@@ -7,6 +7,8 @@ from typing import Any
 import numpy as np
 
 from tthcc_an.nn_study.analysis_regions import (
+    _ar_histogram_edges_and_coverage,
+    build_ar_mask,
     run_ar_score_distributions,
     run_conditional_qcd_veto,
 )
@@ -32,14 +34,21 @@ from tthcc_an.nn_study.plotting import (
     plot_score_distribution,
 )
 from tthcc_an.nn_study.qcd_score_scan import run_qcd_score_scan
+from tthcc_an.nn_study.qcd_data_mc import run_qcd_data_mc
+from tthcc_an.nn_study.regressed_mass_fine_binning import (
+    prepare_data_cache,
+    run_regressed_mass_fine_binning,
+)
 from tthcc_an.nn_study.reporting import format_summary_text, write_json, write_text
 from tthcc_an.nn_study.score_significance import run_score_significance
 from tthcc_an.nn_study.score_significance_2d import run_score_significance_2d
+from tthcc_an.nn_study.tthz_qcd_discriminant import run_tthz_qcd_discriminant
 from tthcc_an.nn_study.weighting_diagnostics import run_weighting_diagnostics
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PLOT_CHOICES = (
+    "fine-truth-stacks",
     "scores",
     "confusion",
     "roc",
@@ -51,6 +60,10 @@ PLOT_CHOICES = (
     "ar-score-distributions",
     "qcd-veto-conditional",
     "qcd-score-scan",
+    "qcd-data-mc",
+    "regressed-mass-fine-binning",
+    "regressed-mass-mcstat",
+    "tthz-qcd-discriminant",
     "weighting-diagnostics",
 )
 
@@ -88,11 +101,22 @@ def _build_parser() -> argparse.ArgumentParser:
             "for example: score_qcd."
         ),
     )
+    parser.add_argument("--data-blinding", choices=("sidebands", "unblinded"), default=None,
+                        help="qcd-data-mc only; defaults to sidebands.")
+    parser.add_argument("--allow-unblinded-data", action="store_true",
+                        help="Explicitly confirm collaboration authorization for private unblinded qcd-data-mc outputs.")
+    parser.add_argument("--qcd-data-mc-selection", choices=("baseline", "tthz", "both"), default=None)
+    parser.add_argument("--refresh-qcd-data-cache", action="store_true")
     cache_mode = parser.add_mutually_exclusive_group()
     cache_mode.add_argument(
         "--prepare-cache",
         action="store_true",
         help="Read ROOT once and write the reusable event-level NN-study cache.",
+    )
+    cache_mode.add_argument(
+        "--prepare-data-cache",
+        action="store_true",
+        help="Read only real-data score/mass branches into a blinded sideband cache.",
     )
     cache_mode.add_argument(
         "--from-cache",
@@ -110,7 +134,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--force",
         action="store_true",
-        help="Overwrite an existing cache; valid only with --prepare-cache.",
+        help="Overwrite an existing cache; valid with --prepare-cache or --prepare-data-cache.",
     )
     return parser
 
@@ -383,11 +407,41 @@ def _prepare_cache(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def run(args: argparse.Namespace) -> dict[str, Any]:
-    if args.force and not args.prepare_cache:
-        raise ValueError("--force is valid only with --prepare-cache.")
+    if args.only and "qcd-data-mc" in args.only:
+        if args.only != ["qcd-data-mc"] or not args.from_cache:
+            raise ValueError("qcd-data-mc requires --from-cache and must run as a separate --only mode.")
+        if args.selection is not None or args.mass_sculpting_score is not None or args.force:
+            raise ValueError("qcd-data-mc does not accept selection overrides or --force; use --refresh-qcd-data-cache.")
+        config = _load_config(args, discover_sample_files=False)
+        return run_qcd_data_mc(
+            config=config, mc_cache_path=resolve_cache_path(config, args.cache_path),
+            blinding=args.data_blinding or "sidebands",
+            allow_unblinded=args.allow_unblinded_data,
+            selection=args.qcd_data_mc_selection or "both",
+            refresh_data_cache=args.refresh_qcd_data_cache,
+        )
+    if (args.data_blinding is not None or args.allow_unblinded_data
+            or args.qcd_data_mc_selection is not None or args.refresh_qcd_data_cache):
+        raise ValueError("Data-blinding options require --only qcd-data-mc.")
+    if args.force and not (args.prepare_cache or args.prepare_data_cache):
+        raise ValueError("--force requires --prepare-cache or --prepare-data-cache.")
     if args.prepare_cache:
         return _prepare_cache(args)
+    if args.prepare_data_cache:
+        if args.only is not None or args.mass_sculpting_score is not None or args.selection is not None:
+            raise ValueError("--prepare-data-cache cannot use --only, --selection, or --mass-sculpting-score.")
+        return prepare_data_cache(_load_config(args, discover_sample_files=False), force=args.force)
+    if args.only and set(args.only) & {"regressed-mass-fine-binning", "regressed-mass-mcstat"}:
+        if {"regressed-mass-fine-binning", "regressed-mass-mcstat"} <= set(args.only):
+            raise ValueError("Choose either the data/MC or MC-only fine-binning mode.")
+        if not args.from_cache:
+            raise ValueError("Fine-binning studies require --from-cache; prepare real data separately for data/MC plots.")
+        if args.selection is not None:
+            raise ValueError("regressed-mass-fine-binning does not accept a selection override.")
     config = _load_config(args, discover_sample_files=not args.from_cache)
+    if (args.only and "tthz-qcd-discriminant" in args.only
+            and not config.tthz_qcd_discriminant_enabled):
+        raise ValueError("tthz-qcd-discriminant is disabled in this config.")
     config.outdir.mkdir(parents=True, exist_ok=True)
     plot_dir = config.outdir / "plots"
     plot_dir.mkdir(parents=True, exist_ok=True)
@@ -458,6 +512,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         raise ValueError("score_significance_2d is not enabled in this config.")
     if "qcd-score-scan" in plot_groups and not config.qcd_score_scan.enabled:
         raise ValueError("qcd_score_scan is not enabled in this config.")
+    if (plot_groups & {"regressed-mass-fine-binning", "regressed-mass-mcstat"}
+            and not config.regressed_mass_fine_binning.get("enabled")):
+        raise ValueError("regressed_mass_fine_binning is not enabled in this config.")
     if (
         "ar-score-distributions" in plot_groups
         and not config.analysis_regions.enabled
@@ -476,7 +533,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
 
     loaded_score_names: list[str] = []
     if config.uses_distinct_prediction_truth:
-        # V4 score-sum validation is part of every downstream workflow.
+        # Coarse score-sum validation is part of every downstream workflow.
         loaded_score_names.extend(config.score_names)
     if "scores" in plot_groups:
         loaded_score_names.extend(config.all_score_names)
@@ -526,6 +583,15 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         loaded_score_names.append("qcd")
     if "qcd-score-scan" in plot_groups:
         loaded_score_names.append(config.qcd_score_scan.score_name)
+    if plot_groups & {"regressed-mass-fine-binning", "regressed-mass-mcstat"}:
+        loaded_score_names.extend(("ttHZ", "qcd"))
+        loaded_analysis_branches.append("TargetFatJet_regressed_mass_generic")
+    if "tthz-qcd-discriminant" in plot_groups:
+        loaded_score_names.extend(("ttHZ", "qcd"))
+        loaded_analysis_branches.append("TargetFatJet_regressed_mass_generic")
+    if "fine-truth-stacks" in plot_groups:
+        loaded_score_names.extend(config.score_names)
+        loaded_score_names.extend(config.analysis_discriminants)
     if "ar-score-distributions" in plot_groups:
         loaded_score_names.extend(config.score_names)
         loaded_score_names.extend(config.analysis_discriminants)
@@ -630,6 +696,56 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             plot_suffix=plot_suffix,
         )
         plots.extend(ar_plots)
+
+    if "fine-truth-stacks" in plot_groups:
+        if not config.uses_distinct_prediction_truth or not config.analysis_regions.enabled:
+            raise ValueError("fine-truth-stacks requires fine truth and AR configuration.")
+        score_by_name = {score.name: score for score in config.all_scores}
+        plot_scores = [*config.scores]
+        plot_scores.extend(score_by_name[name] for name in config.analysis_discriminants
+                           if name not in config.score_names)
+        score_range = config.plot_options.get("score_range", [0.0, 1.0])
+        inclusive_bins = np.linspace(float(score_range[0]), float(score_range[1]),
+                                     int(config.plot_options.get("score_bins", 20)) + 1)
+        for region, mask in (
+            ("", np.ones(dataset.truth_index.shape, dtype=bool)),
+            ("__AR", build_ar_mask(config, dataset)),
+        ):
+            for score in plot_scores:
+                if region:
+                    plot_range = config.analysis_regions.ar_score_plot_ranges[score.name]
+                    bins, _ = _ar_histogram_edges_and_coverage(
+                        plot_range=plot_range,
+                        values=dataset.scores[score.name][mask],
+                        truth_index=dataset.truth_index[mask],
+                        weights=dataset.analysis_weight[mask],
+                        number_of_truths=len(config.truth_categories),
+                    )
+                    display_range = (plot_range.minimum, plot_range.maximum)
+                    output_dir = plot_dir / "score_fine_truth_ar"
+                else:
+                    bins = inclusive_bins
+                    display_range = None
+                    output_dir = plot_dir / "score_fine_truth"
+                path = output_dir / f"{score.branch}__fine_truth{region}__yield__stack{plot_suffix}"
+                plot_score_distribution(
+                    outpath=path,
+                    score=score,
+                    values=dataset.scores[score.name][mask],
+                    truth_index=dataset.truth_index[mask],
+                    weights=dataset.analysis_weight[mask],
+                    truths=config.truth_categories,
+                    config=config,
+                    normalize=False,
+                    stack=True,
+                    reference_style=True,
+                    selection_label=(config.plot_options.get("study_label", "0L V4")
+                                     + (", AR" if region else ", inclusive MC")),
+                    figsize=(6.67, 6.67),
+                    bin_edges=bins,
+                    display_range=display_range,
+                )
+                plots.append(str(path))
 
     qcd_veto_conditional_summary: dict[str, Any] | None = None
     if "qcd-veto-conditional" in plot_groups:
@@ -873,6 +989,33 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         )
         plots.extend(qcd_plots)
 
+    tthz_qcd_discriminant_summary: dict[str, Any] | None = None
+    if "tthz-qcd-discriminant" in plot_groups:
+        discriminant_plots, tthz_qcd_discriminant_summary = (
+            run_tthz_qcd_discriminant(
+                config=config,
+                dataset=dataset,
+                plot_dir=plot_dir,
+                summary_dir=summary_dir,
+                plot_suffix=plot_suffix,
+            )
+        )
+        plots.extend(discriminant_plots)
+
+    regressed_mass_mcstat_summary: dict[str, Any] | None = None
+    if plot_groups & {"regressed-mass-fine-binning", "regressed-mass-mcstat"}:
+        fine_mass_plots, regressed_mass_mcstat_summary = (
+            run_regressed_mass_fine_binning(
+                include_data="regressed-mass-fine-binning" in plot_groups,
+                config=config,
+                dataset=dataset,
+                plot_dir=plot_dir,
+                summary_dir=summary_dir,
+                plot_suffix=plot_suffix,
+            )
+        )
+        plots.extend(fine_mass_plots)
+
     weighting_diagnostics_summary: dict[str, Any] | None = None
     if "weighting-diagnostics" in plot_groups:
         diagnostics_plots, weighting_diagnostics_summary = run_weighting_diagnostics(
@@ -1076,6 +1219,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         ),
         "D_ttHZ_study": d_tthz_summary,
         "qcd_score_scan": qcd_score_scan_summary,
+        "ttHZ_qcd_discriminant": tthz_qcd_discriminant_summary,
+        "regressed_mass_mcstat": regressed_mass_mcstat_summary,
         "ar_score_composition": ar_score_composition_summary,
         "qcd_veto_conditional": qcd_veto_conditional_summary,
         "weighting_diagnostics": weighting_diagnostics_summary,
@@ -1163,7 +1308,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 {
                     "classes": config.prediction_truth_names,
                     "matrices": confusion_summary,
-                    "prediction": "argmax of native V4 score branches",
+                    "prediction": "argmax of native "
+                    + config.plot_options.get("study_label", "V4") + " score branches",
                 },
             )
         if pairwise or pairwise_unweighted:
@@ -1184,6 +1330,19 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
 def main() -> None:
     args = _build_parser().parse_args()
     summary = run(args)
+    if summary.get("operation") == "qcd-data-mc":
+        print("QCD Data/MC diagnostic finished (MC cache + dedicated data histogram cache).")
+        for path in summary["plots"]:
+            print(f"Plot: {path}")
+        for path in summary["summaries"]:
+            print(f"Summary: {path}")
+        return
+    if summary.get("operation") == "prepare-data-cache":
+        print("Real-data sideband cache ready.")
+        print(f"Cache: {summary['cache_path']}")
+        print(f"Data samples: {', '.join(summary['data_samples'])}")
+        print(f"Reused existing cache: {summary['cache_reused']}")
+        return
     if summary.get("operation") == "prepare-cache":
         print("NN-study cache ready.")
         print(f"Cache: {summary['cache_path']}")

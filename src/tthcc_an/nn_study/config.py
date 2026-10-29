@@ -248,6 +248,9 @@ class NnStudyConfig:
     uproot_step_size: str
     max_files_per_sample: int | None
     plot_options: dict[str, Any]
+    regressed_mass_fine_binning: dict[str, Any]
+    qcd_data_mc: dict[str, Any]
+    tthz_qcd_discriminant_enabled: bool
     mass_sculpting: NnMassSculptingConfig
     score_significance: NnScoreSignificanceConfig
     score_significance_2d: NnScoreSignificance2DConfig
@@ -1278,6 +1281,14 @@ def load_nn_study_config(
     repo_root_path = Path(repo_root).resolve()
     payload = load_json_maybe_with_comments(config_path)
     study = dict(payload.get("study", {}))
+    require_complete = bool(study.get("require_complete_samples", False))
+    if discover_sample_files and require_complete:
+        gen_sumw = payload.get("normalization", {}).get("gen_sumw_file")
+        if gen_sumw is not None and not _resolve_path(gen_sumw, config_path.parent).is_file():
+            raise FileNotFoundError(
+                f"Production incomplete: gen_sumw file does not exist: {gen_sumw}. "
+                "Wait for Pepper production to finish before preparing the final cache."
+            )
 
     scores = [
         NnScoreClass(
@@ -1405,6 +1416,14 @@ def load_nn_study_config(
     if not samples:
         raise ValueError("Config field 'samples' must be a non-empty list.")
     _unique_names([sample.name for sample in samples], "sample")
+    if discover_sample_files and require_complete:
+        missing = [sample.name for sample in samples if not sample.files]
+        if missing:
+            raise FileNotFoundError(
+                "Production incomplete: no ROOT files for configured samples: "
+                + ", ".join(missing)
+                + ". Wait for Pepper production to finish before preparing the final cache."
+            )
     mass_sculpting = _load_mass_sculpting(payload, all_scores, truths, samples)
     score_significance = _load_score_significance(payload, all_scores, truths)
     score_significance_2d = _load_score_significance_2d(
@@ -1463,6 +1482,11 @@ def load_nn_study_config(
         uproot_step_size=str(study.get("uproot_step_size", DEFAULT_UPROOT_STEP_SIZE)),
         max_files_per_sample=effective_max_files,
         plot_options=dict(payload.get("plot", {})),
+        regressed_mass_fine_binning=dict(payload.get("regressed_mass_fine_binning", {})),
+        qcd_data_mc=dict(payload.get("qcd_data_mc", {})),
+        tthz_qcd_discriminant_enabled=bool(
+            payload.get("tthz_qcd_discriminant", {}).get("enabled", True)
+        ),
         mass_sculpting=mass_sculpting,
         score_significance=score_significance,
         score_significance_2d=score_significance_2d,

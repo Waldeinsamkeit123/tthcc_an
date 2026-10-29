@@ -1168,6 +1168,148 @@ python scripts/run_nn_study.py \
   --outdir /tmp/nn_study_2024_1l_v1_smoke
 ```
 
+### 2024 NN V5 (0L and 1L)
+
+The independent configs are `config/nn_study/nn_study_2024_0l_v5.json` and
+`config/nn_study/nn_study_2024_1l_v5.json`. They reuse the V4 fine/coarse truth,
+MC samples, TT stitching, weights, native-score shapes/yields, coarse confusion
+and pairwise ROC/AUC (weighted and unweighted), AR plots, significance and
+mass-sculpting modules. 0L also retains the raw `score_ttHZ x score_qcd` scan,
+third-score diagnostic, QCD composition/low-score/conditional-veto/log-x plots,
+and the independent fine-binning mass-stack and MC-stat workflow.
+
+| Channel | ROOT directory | Gen-sumw |
+| --- | --- | --- |
+| 0L | `/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval/0L/0L_v5_events` | `/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval/0L/0L_v5/gen_sumws.json` |
+| 1L | `/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval/1L/1L_v5_events` | `/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval/1L/1L_v5/gen_sumws.json` |
+
+The global sample pattern remains `{input_location}/{name}/*.root`.
+Native scores are `score_ttHZ`, `score_ttjets`, plus `score_qcd` in 0L.
+Neither `D_ttHZ` nor `D_ttHZQCD` is loaded, cached or studied. The hierarchical
+D scan and `--only tthz-qcd-discriminant` are disabled; generic coarse pairwise
+ROC still uses the unchanged pairwise score ratio.
+
+Plotting-only AR uses `score_ttHZ >= 0.70`, plus `score_qcd < 0.10` in 0L.
+The tight mass diagnostic separately uses `score_qcd < 0.01` and
+`score_ttHZ > {0.30,0.40,0.50,0.60,0.70}`. These inherited thresholds are
+comparison settings, not final V5 working points. V4's current AR value
+(`0.075`) is left unchanged. V5 display labels use `plot.study_label`.
+
+Outputs and MC caches are independent under `outputs/nn_study_2024_{0l,1l}_v5/`,
+with `cache/prepared_events.npz` and `cache/prepared_events.metadata.json`.
+Config-only loading (`discover_sample_files=False`) works before production
+finishes. V5 enables `study.require_complete_samples`: ROOT-based runs stop
+if gen-sumw is missing or any configured sample has no ROOT files. This checks
+missing inputs, not whether every production job has finished; wait for Pepper
+completion before preparing final caches. `--from-cache` retains source/hash
+validation and does not discover ROOT inputs or reuse a V4 cache.
+
+After production completes, run from the repository with LCG108 active:
+
+```bash
+python scripts/run_nn_study.py --config config/nn_study/nn_study_2024_0l_v5.json --prepare-cache
+python scripts/run_nn_study.py --config config/nn_study/nn_study_2024_1l_v5.json --prepare-cache
+python scripts/run_nn_study.py --config config/nn_study/nn_study_2024_0l_v5.json --from-cache
+python scripts/run_nn_study.py --config config/nn_study/nn_study_2024_1l_v5.json --from-cache
+python scripts/run_nn_study.py --config config/nn_study/nn_study_2024_0l_v5.json --from-cache --only qcd-score-scan
+python scripts/run_nn_study.py --config config/nn_study/nn_study_2024_0l_v5.json --from-cache --only mass-sculpting
+python scripts/run_nn_study.py --config config/nn_study/nn_study_2024_0l_v5.json --from-cache --only regressed-mass-mcstat
+```
+
+The last mode needs only the MC cache: it produces five mass stacks with
+MC-stat bands, two relative-stat heatmaps, and
+`summaries/regressed_mass_mcstat__mc_only.{json,txt}`. It does not load data
+or trigger metadata. The mass plots remain under `plots/ttHZ_qcd_discriminant/`
+for filename compatibility; this directory name does not enable any D study.
+
+When both correctly trigger-selected V5 `ParkingHH` and `JetMET` datasets
+are ready, prepare the separate blinded data cache and data/MC plots:
+
+```bash
+python scripts/run_nn_study.py --config config/nn_study/nn_study_2024_0l_v5.json --prepare-data-cache
+python scripts/run_nn_study.py --config config/nn_study/nn_study_2024_0l_v5.json --from-cache --only regressed-mass-fine-binning
+```
+
+Data are read only from the configured V5 event directory, with the Pepper
+`ParkingHH > JetMET` trigger priority checked. The independent cache is
+`outputs/nn_study_2024_0l_v5/cache/prepared_data_mass_sidebands.npz`.
+Observed `100 <= mass <= 150 GeV` counts are blinded in plots and summaries;
+MC remains visible, and the data/MC mode adds the Data/Pred. panel. Missing
+data never fall back to V4 or pseudodata. The default full study remains
+MC-only; fine-binning modes are invoked separately as above.
+
+On 2026-10-28, light inspection found no gen-sumw in either channel, only a
+ParkingHH directory in 0L, and an empty 1L events directory. One 0L data file
+contained all three native scores; their sum differed from one by at most
+`7.45e-8` in its 28 events. MC truth/sample schema and 1L scores still require
+validation once those productions are available.
+
+### V5 QCD-score real Data/MC diagnostic
+
+Run this separately from the MC-only QCD scan. The default creates both baseline
+and `score_ttHZ >= 0.70` plots, with **no QCD-score cut**, no flavour categories,
+and no postproc AR/VR/SR/CR selection. Reference lines at 0.01/0.095/0.255 are
+annotations only (`qcd_data_mc.reference_thresholds`; use `[]` to hide them).
+
+```bash
+# Same mass sidebands for Data and MC: mass < 100 OR mass > 150 GeV.
+python scripts/run_nn_study.py --config config/nn_study/nn_study_2024_0l_v5.json --from-cache --only qcd-data-mc --data-blinding sidebands
+
+# Authorized private unblinding: no mass selection for either Data or MC.
+python scripts/run_nn_study.py --config config/nn_study/nn_study_2024_0l_v5.json --from-cache --only qcd-data-mc --data-blinding unblinded --allow-unblinded-data
+```
+
+Use `--qcd-data-mc-selection baseline` or `tthz` to draw just one selection.
+The histogram is 60 uniform bins of `log10(score_qcd)` from -6 to 0, with
+expected yields, signed MC weights, Data statistical errors, both Data/nonQCD
+and Data/allMC ratios, and an all-MC statistical band from sumw2. Zero,
+negative, non-finite, underflow and overflow scores are reported in JSON.
+Invalid ratio denominators are masked and counted; zero ratios are retained
+in the summary but omitted on the logarithmic ratio axis.
+
+Only originating QCD multijet samples belong to QCD. W/Z+jets remain non-QCD,
+regardless of NN truth. TT stitching comes from the validated MC cache. The
+current 39-sample V5 cache omits single top, additional ttV and inclusive ttH
+non-bb beyond the dedicated ttHcc samples; available omitted directories are
+listed in every summary. This is an incomplete prediction, not a closure fit.
+
+This diagnostic alone uses `signed stored weight * lumi_fb * xsec_fb / gen_sumw`
+with the current Pepper normalization and cross-section files. As inspected on
+2026-10-29, Pepper uses **109.95 fb^-1**; existing NN studies/cache still use their
+original luminosity and absolute weights. V5 process weights already contain
+configured b-fragmentation, pileup, heavy-flavour tagging and trigger SFs. No
+extra nominal SF was found in the V5 postprocessor; its score/category cuts are
+not applied here. Individual corrections cannot be recovered from the cumulative
+slim-cache weight. No systematic band or data-driven QCD scale factor is added.
+
+Data come from V5 ParkingHH and JetMET. Pepper applies ParkingHH triggers first;
+JetMET requires PFHT1050 and vetoes ParkingHH triggers. Each file is checked for
+baseline process-stage provenance. An exact run/lumi/event audit removes repeats
+within a stream and stops on any cross-stream overlap. Slim ROOT files have no
+HLT branches, so the trigger decision relies on the process checkpoint and
+inspected Pepper configuration, rather than re-evaluating HLT bits.
+
+Sideband PNGs are in `plots/qcd_data_mc/`; corresponding JSON/TXT files are in
+`summaries/qcd_data_mc/`. Filenames are
+`qcd_score_data_mc__{baseline,ttHZ_ge_0p70}__sidebands_blinded.{png,json,txt}`.
+Unblinded filenames end in `__unblinded` and all such PNGs, `summaries/` and
+`cache/` reside under `plots/qcd_data_mc/private_unblinded/`, restricted to mode
+0700 on the plot, summary and cache directories. On EOS, the workflow also
+restricts inherited user grants through explicit read/browse denials and verifies
+the effective ACL using the configured `private_eos_mgm`. This is required because
+[EOS checks the direct parent and combines POSIX permissions with ACLs](https://eos-docs.web.cern.ch/diopside/manual/interfaces.html).
+Unblinding requires the explicit CLI flag and collaboration permission;
+outputs must remain private and must not be committed or published.
+
+The MC cache is read without modification or MC ROOT access. Data are read once
+per blinding mode into separate histogram caches: sidebands use
+`cache/qcd_data_mc__sidebands.json`, unblinded data use the private directory's
+`cache/data_histograms.json`. These are independent of the existing mass cache.
+They fingerprint input files, streams/triggers, branches, bins, selection and
+blinding mode. Repeated commands validate fingerprints and reuse histograms
+without opening ROOT. Use `--refresh-qcd-data-cache` after data/settings change.
+Sideband caches, logs and summaries never store signal-window observed counts.
+
 ### Prepared NN-study cache
 
 For repeated studies, prepare one event-level cache containing every configured

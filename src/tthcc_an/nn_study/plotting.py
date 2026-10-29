@@ -69,8 +69,17 @@ def plot_score_distribution(
     legend_fontsize: float | None = None,
     bin_edges: np.ndarray | None = None,
     display_range: tuple[float, float] | None = None,
+    cms_com: float | None = None,
+    reference_style: bool = False,
+    selection_label: str | None = None,
+    stack: bool = False,
 ) -> None:
+    if stack and normalize:
+        raise ValueError("Stacked score distributions require weighted yields.")
     _setup_style()
+    if reference_style:
+        plt.style.use(hep.style.CMS)
+        plt.rcParams.update({"font.size": 13})
     if bin_edges is None:
         n_bins = int(config.plot_options.get("score_bins", 20))
         score_range = config.plot_options.get("score_range", [0.0, 1.0])
@@ -86,39 +95,60 @@ def plot_score_distribution(
         dpi=int(config.plot_options.get("score_dpi", 150)),
         figsize=figsize or (5, 4),
     )
+    bottom = np.zeros(bins.size - 1, dtype=np.float64)
     for truth, hist in zip(truths, histograms):
         if np.sum(hist) <= 0:
             continue
-        hep.histplot(
-            hist,
-            bins=bins,
-            ax=ax,
-            color=truth.color,
-            label=truth.label,
-        )
+        if stack:
+            ax.bar(bins[:-1], hist, width=np.diff(bins), bottom=bottom,
+                   align="edge", color=truth.color, label=truth.label,
+                   linewidth=0.25, edgecolor="white")
+            bottom += hist
+        else:
+            hep.histplot(hist, bins=bins, ax=ax, color=truth.color, label=truth.label)
     x_min, x_max = display_range or (float(bins[0]), float(bins[-1]))
     if not np.isfinite(x_min) or not np.isfinite(x_max) or x_min >= x_max:
         raise ValueError("Score display range must contain two ascending finite values.")
     ax.set_xlim(x_min, x_max)
-    ax.set_xlabel(f"{score.label} score")
-    ax.set_ylabel("Fraction of events" if normalize else "Total expected events")
+    ax.set_xlabel(score.label if reference_style else f"{score.label} score")
+    ax.set_ylabel(
+        "Fraction of events" if normalize else ("Events" if reference_style else "Total expected events")
+    )
     use_log = bool(
         config.plot_options.get("shape_log_y", True)
         if normalize
         else config.plot_options.get("yield_log_y", True)
     )
-    if use_log:
+    if use_log and (normalize or not reference_style):
         ax.set_yscale("log")
     if normalize:
         ax.set_ylim(float(config.plot_options.get("shape_y_min", 1e-4)), None)
-    hep.cms.label(data=False, ax=ax)
+    if reference_style:
+        peak = (float(np.max(bottom)) if stack else
+                max((float(np.max(hist)) for hist in histograms), default=0.0))
+        if peak > 0.0:
+            ax.set_ylim(top=peak * (8.0 if normalize else 1.8))
+        hep.cms.label(data=False, llabel="", ax=ax, year=config.year,
+                      lumi=f"{config.lumi_fb:.1f}", com=config.energy_tev, fontsize=15)
+        ax.text(0.13, 1.005, "Simulation", transform=ax.transAxes,
+                va="bottom", fontsize=15, fontstyle="italic")
+        if selection_label:
+            ax.text(0.02, 0.97, selection_label, transform=ax.transAxes,
+                    va="top", fontsize="small")
+    else:
+        cms_kwargs = {} if cms_com is None else {"com": cms_com}
+        hep.cms.label(data=False, ax=ax, **cms_kwargs)
     ax.legend(
-        ncol=legend_columns or 2,
+        ncol=2 if reference_style else legend_columns or 2,
         frameon=False,
         columnspacing=0.6,
         handlelength=1.0,
-        fontsize=legend_fontsize,
+        fontsize=9 if reference_style else legend_fontsize,
+        loc="upper left" if reference_style else "best",
+        bbox_to_anchor=(0.02, 0.93) if reference_style else None,
     )
+    if reference_style:
+        fig.tight_layout()
     _save(fig, outpath)
 
 
@@ -395,6 +425,57 @@ def plot_qcd_working_point_distribution(
     _save(fig, outpath)
 
 
+def plot_qcd_logx_distribution(
+    *,
+    outpath: Path,
+    bins: np.ndarray,
+    histograms: dict[str, np.ndarray],
+    groups: list[NnQcdScoreGroup],
+    reference_lines: list[float],
+) -> None:
+    _setup_style()
+    fig, ax = plt.subplots(dpi=150, figsize=(7.2, 5.2))
+    for group in groups:
+        values = np.asarray(histograms[group.name], dtype=np.float64)
+        if np.sum(values) <= 0.0:
+            continue
+        ax.stairs(
+            values,
+            bins,
+            color=group.color,
+            linewidth=1.8,
+            label=group.label,
+        )
+    for value, linestyle, color, label, height in (
+        (0.05, ":", "darkorange", "candidate 0.05", 0.79),
+        (0.075, "-.", "steelblue", "nominal 0.075", 0.87),
+        (0.10, "--", "firebrick", "reference 0.10", 0.95),
+    ):
+        if value not in reference_lines:
+            continue
+        ax.axvline(value, color=color, linestyle=linestyle, linewidth=1.1)
+        ax.text(
+            value,
+            height,
+            label,
+            color=color,
+            rotation=90,
+            ha="right",
+            va="top",
+            fontsize=7.5,
+            transform=ax.get_xaxis_transform(),
+        )
+    ax.set_xscale("log")
+    ax.set_yscale("log")
+    ax.set_xlim(float(bins[0]), float(bins[-1]))
+    ax.set_xlabel(r"$\mathrm{score}_{\mathrm{qcd}}$")
+    ax.set_ylabel("Fraction of events / log bin")
+    ax.grid(alpha=0.18, which="both")
+    ax.legend(frameon=False, ncol=2, fontsize=8.0)
+    hep.cms.label(data=False, com=13, ax=ax)
+    _save(fig, outpath)
+
+
 def plot_qcd_analysis_region_distribution(
     *,
     outpath: Path,
@@ -554,8 +635,8 @@ def plot_qcd_analysis_region_distribution(
 def _qcd_veto_axis_ticks(
     veto_threshold: float, maximum: float
 ) -> tuple[np.ndarray, np.ndarray]:
-    left_ticks = np.linspace(0.0, veto_threshold, 5)
-    right_ticks = np.linspace(2.0 * veto_threshold, maximum, 5)
+    left_ticks = np.asarray([0.025, 0.050, veto_threshold])
+    right_ticks = np.linspace(max(0.20, 2.0 * veto_threshold), maximum, 5)
     if right_ticks[0] <= veto_threshold:
         raise ValueError("Right QCD-veto ticks must start above the broken-axis boundary.")
     return left_ticks, right_ticks
@@ -656,7 +737,7 @@ def plot_qcd_veto_distribution(
     right_ax.set_xlim(veto_threshold, float(bins[-1]))
     left_ticks, right_ticks = _qcd_veto_axis_ticks(veto_threshold, float(bins[-1]))
     left_ax.set_xticks(left_ticks, [f"{value:.3f}" for value in left_ticks])
-    right_ax.set_xticks(right_ticks, [f"{value:.1f}" for value in right_ticks])
+    right_ax.set_xticks(right_ticks, [f"{value:.3g}" for value in right_ticks])
     left_ax.set_ylabel("Normalized density")
     right_ax.tick_params(axis="y", left=False, labelleft=False)
     left_ax.spines["right"].set_visible(False)
@@ -944,12 +1025,16 @@ def plot_score_significance_comparison(
     discriminant_result: dict[str, object],
     signal_label: str,
     selection_label: str | None = None,
+    raw_label: str = r"raw $score_{ttHZ}$",
+    discriminant_label: str = r"persisted $D_{ttHZ}$",
+    title: str | None = None,
+    cms_com: float | None = None,
 ) -> None:
     _setup_style()
     fig, ax = plt.subplots(dpi=150, figsize=(7.0, 5.0))
     for result, label, color in (
-        (raw_result, r"raw $score_{ttHZ}$", "royalblue"),
-        (discriminant_result, r"persisted $D_{ttHZ}$", "darkorange"),
+        (raw_result, raw_label, "royalblue"),
+        (discriminant_result, discriminant_label, "darkorange"),
     ):
         points = list(result["points"])
         cuts = np.asarray([point["cut"] for point in points], dtype=np.float64)
@@ -971,7 +1056,7 @@ def plot_score_significance_comparison(
     ax.set_ylim(bottom=0.0)
     ax.set_xlabel("Cut value (keep score > cut)")
     ax.set_ylabel(r"Expected significance $S/\sqrt{S+B}$")
-    ax.set_title(f"{signal_label}: raw score vs persisted discriminant")
+    ax.set_title(title or f"{signal_label}: raw score vs persisted discriminant")
     if selection_label:
         ax.text(
             0.98,
@@ -984,7 +1069,8 @@ def plot_score_significance_comparison(
         )
     ax.grid(alpha=0.2)
     ax.legend(frameon=False)
-    hep.cms.label(data=False, ax=ax)
+    cms_kwargs = {} if cms_com is None else {"com": cms_com}
+    hep.cms.label(data=False, ax=ax, **cms_kwargs)
     _save(fig, outpath)
 
 

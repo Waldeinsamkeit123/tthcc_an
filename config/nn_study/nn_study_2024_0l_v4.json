@@ -32,6 +32,18 @@
     "roc_y_min": 0.00001, "roc_y_max": 2.0,
     "score_dpi": 150, "confusion_dpi": 150, "roc_dpi": 100, "auc_dpi": 150
   },
+  "regressed_mass_fine_binning": {
+    "enabled": true,
+    "qcd_cut": 0.01,
+    "tthz_cuts": [0.30, 0.40, 0.50, 0.60, 0.70],
+    "mass_range": [50.0, 200.0],
+    "mass_bin_width": 5.0,
+    "blind_mass_range": [100.0, 150.0],
+    "mcstat_detailed_cuts": [0.50, 0.70],
+    "ratio_ylim": [0.5, 1.5],
+    "data_samples": ["ParkingHH", "JetMET"],
+    "data_trigger_config": "/afs/cern.ch/user/h/hanw/pepper/pepper-tth/data/2024/config_0L_boost.json"
+  },
   "significance_mass_window": {
     "enabled": true, "branch": "TargetFatJet_regressed_mass_generic", "range": [100.0, 150.0]
   },
@@ -40,7 +52,7 @@
     "ar": {
       "cuts": [
         {"score": "score_ttHZ", "direction": ">=", "threshold": 0.70},
-        {"score": "score_qcd", "direction": "<", "threshold": 0.10}
+        {"score": "score_qcd", "direction": "<", "threshold": 0.075}
       ],
       "score_plot_ranges": {
         "score_ttHZ": {"min": 0.70, "max": 1.00, "bins": 30},

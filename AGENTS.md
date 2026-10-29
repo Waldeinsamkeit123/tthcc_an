@@ -549,6 +549,41 @@ event-BDT 原型额外约定：
 
 NN study 额外约定：
 
+- V5 configs 是 `config/nn_study/nn_study_2024_{0l,1l}_v5.json`，复用 V4 的
+  fine/coarse truth、39/18 个 MC 样本、TT stitching、权重和原生 score 研究。
+  输入为 `NNeval/0L/0L_v5_events` 与 `NNeval/1L/1L_v5_events`，完整前缀是
+  `/eos/user/h/hanw/ttHcc/pepper_data/2024/`；gen-sumw 在各通道对应的
+  `0L_v5/gen_sumws.json`、`1L_v5/gen_sumws.json`。保留全局 sample pattern。
+- V5 原生输出是 `score_ttHZ/score_ttjets`，0L 加 `score_qcd`；不请求、缓存或
+  研究 `D_ttHZ/D_ttHZQCD`，禁用 hierarchical D scan 与 `tthz-qcd-discriminant`。
+  原生 pairwise ROC 的 score ratio 算法保留。不得修改 V4 配置或复用 V4 缓存。
+- V5 AR 是 `score_ttHZ >= 0.70`，0L 加 `score_qcd < 0.10`；细分质量诊断独立
+  使用 `score_qcd < 0.01`。所有继承 cut 仅用于比较，不能自动成为最终 WP。
+- V5 cache 位于 `outputs/nn_study_2024_{0l,1l}_v5/cache/prepared_events.npz`。
+  完成 Pepper 后用对应 config 的 `--prepare-cache`，再 `--from-cache` 运行。
+  `study.require_complete_samples` 在 ROOT 模式检查 gen-sumw 和每个 sample 的
+  文件是否存在；不能代替作业完成检查。配置预检使用 `discover_sample_files=False`。
+- `--from-cache --only regressed-mass-mcstat` 独立产生质量堆叠、MC-stat 热图和
+  `regressed_mass_mcstat__mc_only.{json,txt}`，不要求 data cache 或触发器配置。
+  0L data/MC 则先 `--prepare-data-cache`，再
+  `--from-cache --only regressed-mass-fine-binning`；data cache 在本版本的
+  `cache/prepared_data_mass_sidebands.npz`，保留 100–150 GeV 观测数据盲区。
+  数据未齐不能生成伪数据或回退到 V4。V5 绘图短标签由 `plot.study_label` 控制。
+
+- 0L V5 真实 Data/MC score 诊断独立使用 `--from-cache --only qcd-data-mc`。
+  默认 `--data-blinding sidebands` 对 Data/MC 同时排除 inclusive [100,150]；
+  `--data-blinding unblinded --allow-unblinded-data` 需用户明确授权，输出、摘要和
+  cache 全在 `plots/qcd_data_mc/private_unblinded/`，三个目录分别设置 0700 并
+  限制、核验 EOS 继承 ACL；只检查 chmod 不够。不得发布或提交。
+  默认同时画 baseline 与 `score_ttHZ >= 0.70`；不施加任何 QCD score cut、
+  AR/VR 或 flavour 选择。参考竖线不参与事件选择。
+  MC 按来源样本区分 QCD，W/Z 留在 nonQCD，保持 TT stitching；本诊断单独使用
+  `signed stored weight * lumi_fb * xsec_fb / gen_sumw`，当前 Pepper lumi=109.95，
+  不改变旧 NN 图的 abs-weight 或 MC cache。现有 39-sample MC 缺 single-top、
+  部分 ttV 等，必须标为不完整预测。真实数据沿用 ParkingHH > JetMET trigger
+  veto，并核查 run/lumi/event；跨流重复报错。数据 histogram cache 与 MC/mass
+  cache 独立，侧带 cache 不含盲区观测；失效后用 `--refresh-qcd-data-cache`。
+
 - 当前 input 是
   `/eos/user/h/hanw/ttHcc/pepper_data/2024/NNeval_{0L,1L}_v1_pred_RealMass_events`
 - normalization metadata 是

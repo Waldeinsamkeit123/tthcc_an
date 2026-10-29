@@ -8,8 +8,14 @@ import numpy as np
 from tthcc_an.nn_study.analysis_regions import qcd_veto_threshold
 from tthcc_an.nn_study.config import NnQcdScoreGroup, NnStudyConfig
 from tthcc_an.nn_study.dataset import NnDataset
+from tthcc_an.nn_study.qcd_low_score import (
+    build_detailed_low_score_scan,
+    build_logx_distribution,
+    format_detailed_low_score_scan,
+)
 from tthcc_an.nn_study.plotting import (
     plot_qcd_analysis_region_distribution,
+    plot_qcd_logx_distribution,
     plot_qcd_veto_distribution,
     plot_qcd_efficiencies,
     plot_qcd_expected_yields,
@@ -27,6 +33,9 @@ from tthcc_an.nn_study.score_significance import (
     mark_mass_window_result,
     mass_window_suffix,
 )
+
+
+_LOGX_CUT_THRESHOLD = 0.01
 
 
 def _qcd_region_visualization_bins(veto_threshold: float | None) -> np.ndarray:
@@ -54,11 +63,13 @@ def _qcd_region_visualization_bins(veto_threshold: float | None) -> np.ndarray:
     )
     veto_binning_valid = (
         veto_threshold is not None
-        and np.isclose(veto_threshold, 0.10, rtol=0.0, atol=1e-12)
+        and 0.0 < veto_threshold <= 0.10
         and bins.size == 39
         and np.allclose(widths[:20], 0.005)
         and np.allclose(widths[20:], 0.05)
-        and np.count_nonzero(bins == veto_threshold) == 1
+        and np.count_nonzero(
+            np.isclose(bins, veto_threshold, rtol=0.0, atol=1e-12)
+        ) == 1
     )
     if not (
         np.unique(bins).size == bins.size
@@ -262,6 +273,29 @@ def _format_summary(payload: dict[str, Any]) -> str:
                     f"{point['background_weighted_yield']:<14.7g} "
                     f"{point['significance']:<14.7g}"
                 )
+    ar_mass_window_significance = payload["scan"].get(
+        "score_significance_s_over_sqrt_s_plus_b_ar_mass_window"
+    )
+    if ar_mass_window_significance is not None:
+        selection = ar_mass_window_significance["ar_mass_window_selection"]
+        lines.extend(
+            [
+                "",
+                "AR + mass-window score significance "
+                "(scan maximum; not a final working point):",
+                f"  Selection: {selection['boundary_semantics']}",
+                "  No score_qcd preselection and no flavour tagging",
+                "  Z = S / sqrt(S + B)",
+                "  Background = every other AR mass-window selected MC event",
+            ]
+        )
+        for signal_name, result in ar_mass_window_significance["signals"].items():
+            lines.append(
+                f"  {signal_name}: baseline Z={result['baseline_significance']:.9g}; "
+                f"best cut={result['best_threshold']:.9g}, "
+                f"max Z={result['best_significance']:.9g}"
+            )
+
     validation = payload["validation"]
     lines.extend(
         [
@@ -274,6 +308,24 @@ def _format_summary(payload: dict[str, Any]) -> str:
             f"  finite JSON metrics: {validation['no_nonfinite_serialized_metrics']}",
         ]
     )
+    detailed = payload.get("detailed_low_score_scan")
+    if detailed is not None:
+        lines.extend(format_detailed_low_score_scan(detailed))
+    logx = payload.get("logx_distribution")
+    if logx is not None:
+        lines.extend(
+            [
+                "",
+                "Log-x score_qcd distribution:",
+                f"  range: {logx['plot_range'][0]:g} to "
+                f"{logx['plot_range'][1]:g}",
+                f"  logarithmic bins: {logx['bins']}",
+                f"  nonpositive count/yield: "
+                f"{logx['score_qcd_nonpositive_event_count']}/"
+                f"{logx['score_qcd_nonpositive_weighted_yield']:.8g}",
+                "  reference lines: 0.05, 0.075, 0.10",
+            ]
+        )
     return "\n".join(lines) + "\n"
 
 
@@ -293,6 +345,7 @@ def run_qcd_score_scan(
     eligible = finite_score & finite_weight
     if not np.any(eligible):
         raise ValueError("QCD-score scan has no finite-score, finite-weight events.")
+    veto_threshold = qcd_veto_threshold(config)
 
     base_thresholds = (
         np.linspace(
@@ -387,6 +440,7 @@ def run_qcd_score_scan(
 
     score_significance: dict[str, Any] | None = None
     mass_window_score_significance: dict[str, Any] | None = None
+    ar_mass_window_score_significance: dict[str, Any] | None = None
     if settings.significance_enabled:
         score_significance = calculate_score_significance_scan(
             score=score,
@@ -453,6 +507,89 @@ def run_qcd_score_scan(
                     f"{signal_name}_best_significance"
                 ] = result["best_significance"]
 
+            tthz_ar_cuts = [
+                cut
+                for cut in config.analysis_regions.ar_cuts
+                if cut.score_branch == "score_ttHZ" and cut.direction == ">="
+            ]
+            if len(tthz_ar_cuts) != 1:
+                raise ValueError(
+                    "AR mass-window QCD scan requires one score_ttHZ >= AR cut."
+                )
+            tthz_cut = tthz_ar_cuts[0]
+            if tthz_cut.score_name not in dataset.scores:
+                raise KeyError("AR mass-window QCD scan requires score_ttHZ.")
+            score_tthz = np.asarray(
+                dataset.scores[tthz_cut.score_name], dtype=np.float64
+            )
+            ar_mass_mask = (
+                mass_mask
+                & np.isfinite(score_tthz)
+                & (score_tthz >= tthz_cut.threshold)
+            )
+            ar_mass_window_score_significance = calculate_score_significance_scan(
+                score=score[ar_mass_mask],
+                weights=weights[ar_mass_mask],
+                truth_index=dataset.truth_index[ar_mass_mask],
+                truth_names=config.truth_names,
+                signals=settings.significance_signals,
+                thresholds=thresholds,
+                direction=settings.direction,
+            )
+            mark_mass_window_result(
+                ar_mass_window_score_significance,
+                mass_window_metadata,
+            )
+            ar_mass_selection = {
+                "score_name": tthz_cut.score_name,
+                "score_branch": tthz_cut.score_branch,
+                "direction": tthz_cut.direction,
+                "threshold": tthz_cut.threshold,
+                "boundary_semantics": (
+                    f"{tthz_cut.score_branch} {tthz_cut.direction} "
+                    f"{tthz_cut.threshold:g} AND "
+                    f"{mass_window_metadata['boundary_semantics']}"
+                ),
+                "selected_event_count": int(np.sum(ar_mass_mask)),
+                "qcd_score_preselection_applied": False,
+                "flavour_tagging_applied": False,
+            }
+            ar_mass_window_score_significance.update(
+                {
+                    "score_name": settings.score_name,
+                    "score_branch": settings.score_branch,
+                    "scan_min": settings.scan_min,
+                    "scan_max": settings.scan_max,
+                    "configured_log_points": settings.scan_points,
+                    "candidate_thresholds": settings.candidate_thresholds,
+                    "ar_mass_window_selection": ar_mass_selection,
+                    "baseline_semantics": (
+                        "AR ttHZ and mass-window selected MC population before "
+                        "any score_qcd cut."
+                    ),
+                    "scan_population": (
+                        "AR ttHZ and mass-window selected MC population with "
+                        "finite score_qcd and finite non-negative analysis weight."
+                    ),
+                }
+            )
+            for signal_name, result in ar_mass_window_score_significance[
+                "signals"
+            ].items():
+                ar_mass_window_score_significance[
+                    f"{signal_name}_best_cut"
+                ] = result["best_threshold"]
+                ar_mass_window_score_significance[
+                    f"{signal_name}_best_significance"
+                ] = result["best_significance"]
+                result["signal_definition"] = (
+                    f"AR mass-window selected truth category == {signal_name}"
+                )
+                result["background_definition"] = (
+                    "all other AR mass-window selected MC events "
+                    f"(truth category != {signal_name})"
+                )
+
     candidate_rows: list[dict[str, Any]] = []
     candidate_indices: list[int] = []
     for cut in settings.candidate_thresholds:
@@ -491,6 +628,13 @@ def run_qcd_score_scan(
         if mass_window_score_significance is not None:
             row["s_over_sqrt_s_plus_b_mass_window"] = {
                 signal_name: mass_window_score_significance["signals"][
+                    signal_name
+                ]["points"][index]
+                for signal_name in settings.significance_signals
+            }
+        if ar_mass_window_score_significance is not None:
+            row["s_over_sqrt_s_plus_b_ar_mass_window"] = {
+                signal_name: ar_mass_window_score_significance["signals"][
                     signal_name
                 ]["points"][index]
                 for signal_name in settings.significance_signals
@@ -559,7 +703,26 @@ def run_qcd_score_scan(
             working_point_shapes[group.name] = np.zeros_like(histogram)
             normalized_integrals[group.name] = None
 
-    veto_threshold = qcd_veto_threshold(config)
+    detailed_low_score_scan: dict[str, Any] | None = None
+    logx_bins: np.ndarray | None = None
+    logx_histograms: dict[str, np.ndarray] | None = None
+    logx_metadata: dict[str, Any] | None = None
+    if veto_threshold is not None:
+        detailed_low_score_scan = build_detailed_low_score_scan(
+            config=config,
+            dataset=dataset,
+            score=score,
+            weights=weights,
+            eligible=eligible,
+        )
+        logx_bins, logx_histograms, logx_metadata = build_logx_distribution(
+            config=config,
+            dataset=dataset,
+            score=score,
+            weights=weights,
+            eligible=eligible,
+        )
+
     analysis_region_bins = _qcd_region_visualization_bins(veto_threshold)
     analysis_region_widths = np.diff(analysis_region_bins)
     analysis_region_densities: dict[str, np.ndarray] = {}
@@ -590,6 +753,13 @@ def run_qcd_score_scan(
             f"qcd_score_distribution__analysis_regions{plot_suffix}"
         ),
     }
+    if logx_metadata is not None:
+        plot_paths["logx_distribution"] = (
+            qcd_plot_dir / f"qcd_score_distribution__logx{plot_suffix}"
+        )
+        plot_paths["logx_cut_distribution"] = (
+            qcd_plot_dir / f"qcd_score_distribution__logx_cut_0p01{plot_suffix}"
+        )
     if score_significance is not None:
         plot_paths["significance_s_over_sqrt_s_plus_b"] = qcd_plot_dir / (
             f"qcd_cut_scan__significance_s_over_sqrt_s_plus_b{plot_suffix}"
@@ -600,6 +770,19 @@ def run_qcd_score_scan(
         ] = qcd_plot_dir / (
             "qcd_cut_scan__significance_s_over_sqrt_s_plus_b__"
             f"{mass_window_suffix(mass_window_score_significance['mass_window'])}"
+            f"{plot_suffix}"
+        )
+    if ar_mass_window_score_significance is not None:
+        ar_selection = ar_mass_window_score_significance[
+            "ar_mass_window_selection"
+        ]
+        threshold_token = f"{ar_selection['threshold']:g}".replace(".", "p")
+        plot_paths[
+            "significance_s_over_sqrt_s_plus_b_ar_mass_window"
+        ] = qcd_plot_dir / (
+            "qcd_cut_scan__significance_s_over_sqrt_s_plus_b__"
+            f"score_ttHZ_ge_{threshold_token}__"
+            f"{mass_window_suffix(ar_mass_window_score_significance['mass_window'])}"
             f"{plot_suffix}"
         )
     plot_qcd_score_distribution(
@@ -690,6 +873,31 @@ def run_qcd_score_scan(
                 "boundary_semantics"
             ],
         )
+    if ar_mass_window_score_significance is not None:
+        truths_by_name = {
+            truth.name: truth for truth in config.truth_categories
+        }
+        plot_score_significance(
+            outpath=plot_paths[
+                "significance_s_over_sqrt_s_plus_b_ar_mass_window"
+            ],
+            thresholds=thresholds,
+            signal_results=ar_mass_window_score_significance["signals"],
+            signal_styles={
+                name: {
+                    "label": truths_by_name[name].label,
+                    "color": truths_by_name[name].color,
+                }
+                for name in settings.significance_signals
+            },
+            score_branch=settings.score_branch,
+            direction=settings.direction,
+            xscale=settings.scan_scale,
+            candidate_thresholds=settings.candidate_thresholds,
+            selection_label=ar_mass_window_score_significance[
+                "ar_mass_window_selection"
+            ]["boundary_semantics"],
+        )
     plot_qcd_working_point_distribution(
         outpath=plot_paths["working_point_distribution"],
         bins=working_point_bins,
@@ -708,6 +916,27 @@ def run_qcd_score_scan(
         normalize=False,
         xscale=settings.working_point_scale,
     )
+    if (
+        logx_metadata is not None
+        and logx_bins is not None
+        and logx_histograms is not None
+    ):
+        plot_qcd_logx_distribution(
+            outpath=plot_paths["logx_distribution"],
+            bins=logx_bins,
+            histograms=logx_histograms,
+            groups=settings.distribution_groups,
+            reference_lines=logx_metadata["reference_lines"],
+        )
+        plot_qcd_working_point_distribution(
+            outpath=plot_paths["logx_cut_distribution"],
+            bins=logx_bins,
+            histograms=logx_histograms,
+            groups=settings.distribution_groups,
+            reference_threshold=_LOGX_CUT_THRESHOLD,
+            normalize=True,
+            xscale="log",
+        )
     if veto_threshold is None:
         plot_qcd_analysis_region_distribution(
             outpath=plot_paths["analysis_region_distribution"],
@@ -879,6 +1108,9 @@ def run_qcd_score_scan(
             "score_significance_s_over_sqrt_s_plus_b_mass_window": (
                 mass_window_score_significance
             ),
+            "score_significance_s_over_sqrt_s_plus_b_ar_mass_window": (
+                ar_mass_window_score_significance
+            ),
         },
         "candidate_working_points": candidate_rows,
         "validation": {
@@ -906,10 +1138,27 @@ def run_qcd_score_scan(
                 if mass_window_score_significance is None
                 else mass_window_score_significance["validation"]
             ),
+            "score_significance_ar_mass_window": (
+                None
+                if ar_mass_window_score_significance is None
+                else ar_mass_window_score_significance["validation"]
+            ),
             "no_nonfinite_serialized_metrics": True,
         },
         "plots": {name: str(path) for name, path in plot_paths.items()},
     }
+    if detailed_low_score_scan is not None:
+        payload["detailed_low_score_scan"] = detailed_low_score_scan
+    if logx_metadata is not None:
+        logx_metadata["plot"] = str(plot_paths["logx_distribution"])
+        logx_metadata["cut_visualization"] = {
+            "plot": str(plot_paths["logx_cut_distribution"]),
+            "threshold": _LOGX_CUT_THRESHOLD,
+            "kept_side": "score_qcd < 0.01",
+            "rejected_side": "score_qcd >= 0.01",
+        }
+        payload["logx_distribution"] = logx_metadata
+
     json_path = summary_dir / "qcd_score_scan.json"
     text_path = summary_dir / "qcd_score_scan.txt"
     write_json(json_path, payload)
